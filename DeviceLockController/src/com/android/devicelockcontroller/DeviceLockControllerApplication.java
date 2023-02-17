@@ -18,8 +18,10 @@ package com.android.devicelockcontroller;
 
 import android.app.Application;
 import android.content.ComponentName;
+import android.content.Context;
 
 import androidx.annotation.MainThread;
+import androidx.work.Configuration;
 
 import com.android.devicelockcontroller.policy.DevicePolicyController;
 import com.android.devicelockcontroller.policy.DevicePolicyControllerImpl;
@@ -32,7 +34,7 @@ import com.android.devicelockcontroller.util.LogUtil;
  * Application class for Device Lock Controller.
  */
 public final class DeviceLockControllerApplication extends Application implements
-        PolicyObjectsInterface {
+        PolicyObjectsInterface, Configuration.Provider {
     private static final String TAG = "DeviceLockControllerApplication";
 
     private static final String DEVICE_ADMIN_RECEIVER_CLASS =
@@ -41,9 +43,12 @@ public final class DeviceLockControllerApplication extends Application implement
     private DeviceStateController mStateController;
     private DevicePolicyController mPolicyController;
 
+    private static Context sApplicationContext;
+
     @Override
     public void onCreate() {
         super.onCreate();
+        sApplicationContext = getApplicationContext();
         LogUtil.i(TAG, "onCreate");
     }
 
@@ -69,5 +74,17 @@ public final class DeviceLockControllerApplication extends Application implement
         }
 
         return mPolicyController;
+    }
+
+    public static Context getAppContext() {
+        return sApplicationContext;
+    }
+
+    //b/267355744: Required to initialize WorkManager on-demand.
+    @Override
+    public Configuration getWorkManagerConfiguration() {
+        return new Configuration.Builder()
+                .setMinimumLoggingLevel(android.util.Log.INFO)
+                .build();
     }
 }

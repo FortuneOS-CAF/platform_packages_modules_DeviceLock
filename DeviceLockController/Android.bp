@@ -160,6 +160,7 @@ android_app {
         "androidx.work_work-runtime",
         "devicelockcontroller-activities-lib",
         "devicelockcontroller-grpclib",
+        "devicelockcontroller-protos-lite",
         "devicelockcontroller-interface",
         "devicelockcontroller-res-lib",
         "devicelockcontroller-util-lib",
@@ -184,6 +185,10 @@ android_app {
         "transport-runtime-aar",
         "jsr330",
         "dagger2",
+    ],
+
+    libs: [
+        "framework-tethering",
     ],
 
     lint: {

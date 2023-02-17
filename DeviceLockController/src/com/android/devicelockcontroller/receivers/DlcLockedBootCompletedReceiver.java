@@ -16,6 +16,7 @@
 
 package com.android.devicelockcontroller.receivers;
 
+import static android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
 import static android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
 import static android.content.pm.PackageManager.DONT_KILL_APP;
 
@@ -30,30 +31,27 @@ import android.content.pm.PackageManager.ComponentEnabledSetting;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.PackageManager.PackageInfoFlags;
 import android.os.UserManager;
-import android.util.ArraySet;
 
 import androidx.annotation.VisibleForTesting;
 
-import com.android.devicelockcontroller.DeviceLockControllerService;
+import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
 import com.android.devicelockcontroller.util.LogUtil;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
 
 /**
- * Handle boot completed. This receiver runs for any user (singleUser="false").
- * Disable unneeded components for non system users.
+ * Handle {@link  Intent#ACTION_LOCKED_BOOT_COMPLETED}. This receiver runs for any user
+ * (singleUser="false").
+ *
+ * The receiver does the following tasks:
+ * 1. Disable unneeded components for non system users.
+ * 2. Start lock task mode if applicable
  */
-public final class DlcMultiUserBootCompletedReceiver extends BroadcastReceiver {
+public final class DlcLockedBootCompletedReceiver extends BroadcastReceiver {
     private static final String TAG = "BootCompletedBroadcastReceiver";
 
-    private static final Set<String> sComponentAllowlist = new ArraySet<>(Arrays.asList(
-            DlcMultiUserBootCompletedReceiver.class.getCanonicalName(),
-            DeviceLockControllerService.class.getCanonicalName(),
-            DlcBootCompletedReceiver.class.getCanonicalName(),
-            DlcDeviceAdminReceiver.class.getCanonicalName()));
+    private static final String DEVICE_LOCK_CONTROLLER_PREFIX = "com.android.devicelockcontroller.";
 
     private static void addComponentNamesToEnabledList(
             List<ComponentEnabledSetting> componentEnabledSettings,
@@ -62,8 +60,8 @@ public final class DlcMultiUserBootCompletedReceiver extends BroadcastReceiver {
             return;
         }
 
-        for (ComponentInfo componentInfo: componentInfoList) {
-            if (!sComponentAllowlist.contains(componentInfo.name)) {
+        for (ComponentInfo componentInfo : componentInfoList) {
+            if (!componentInfo.name.startsWith(DEVICE_LOCK_CONTROLLER_PREFIX)) {
                 final ComponentName componentName =
                         new ComponentName(componentInfo.packageName, componentInfo.name);
                 final ComponentEnabledSetting componentEnabledSetting =
@@ -106,6 +104,29 @@ public final class DlcMultiUserBootCompletedReceiver extends BroadcastReceiver {
         }
     }
 
+    @VisibleForTesting
+    static void startLockTaskModeIfApplicable(Context context) {
+        final PackageManager pm = context.getPackageManager();
+        final ComponentName lockTaskBootCompletedReceiver = new ComponentName(context,
+                LockTaskBootCompletedReceiver.class);
+        if (((PolicyObjectsInterface) context.getApplicationContext())
+                .getStateController().isInSetupState()) {
+            // b/172281939: WorkManager is not available at this moment, and we may not launch
+            // lock task mode successfully. Therefore, defer it to LockTaskBootCompletedReceiver.
+            LogUtil.i(TAG,
+                    "Setup has not completed yet when ACTION_LOCKED_BOOT_COMPLETED is received. "
+                            + "We can not start lock task mode here.");
+            pm.setComponentEnabledSetting(lockTaskBootCompletedReceiver,
+                    COMPONENT_ENABLED_STATE_DEFAULT, DONT_KILL_APP);
+            return;
+        }
+
+        BootUtils.startLockTaskModeAtBoot(context);
+        pm.setComponentEnabledSetting(
+                new ComponentName(context, LockTaskBootCompletedReceiver.class),
+                COMPONENT_ENABLED_STATE_DISABLED, DONT_KILL_APP);
+    }
+
     @Override
     public void onReceive(Context context, Intent intent) {
         LogUtil.d(TAG, "Locked Boot completed");
@@ -114,5 +135,6 @@ public final class DlcMultiUserBootCompletedReceiver extends BroadcastReceiver {
         }
 
         disableComponentsForNonSystemUser(context);
+        startLockTaskModeIfApplicable(context);
     }
 }
