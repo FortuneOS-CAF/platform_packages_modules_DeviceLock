@@ -28,6 +28,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ServiceInfo;
 import android.devicelock.DeviceId.DeviceIdType;
+import android.devicelock.DeviceLockManager;
 import android.devicelock.IDeviceLockService;
 import android.devicelock.IGetDeviceIdCallback;
 import android.devicelock.IGetKioskAppsCallback;
@@ -40,10 +41,16 @@ import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.telephony.TelephonyManager;
+import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.Slog;
 
+import java.util.List;
+import java.util.ArrayList;
+
 import com.android.internal.annotations.VisibleForTesting;
+
+import java.util.List;
 
 /**
  * Implementation of {@link android.devicelock.IDeviceLockService} binder service.
@@ -194,37 +201,74 @@ final class DeviceLockServiceImpl extends IDeviceLockService.Stub {
         try {
             if (deviceIdTypeBitmap < 0 || deviceIdTypeBitmap >= (1 << (LAST_DEVICE_ID_TYPE + 1))) {
                 callback.onError(IGetDeviceIdCallback.ERROR_INVALID_DEVICE_ID_TYPE_BITMAP);
-
                 return;
             }
-
-            final TelephonyManager telephonyManager =
-                    mContext.getSystemService(TelephonyManager.class);
-            if ((deviceIdTypeBitmap & (1 << DEVICE_ID_TYPE_IMEI)) != 0) {
-                final String imei = telephonyManager.getImei();
-
-                if (imei != null) {
-                    callback.onDeviceIdReceived(DEVICE_ID_TYPE_IMEI, imei);
-
-                    return;
-                }
-            }
-
-            if ((deviceIdTypeBitmap & (1 << DEVICE_ID_TYPE_MEID)) != 0) {
-                final String meid = telephonyManager.getMeid();
-
-                if (meid != null) {
-                    callback.onDeviceIdReceived(DEVICE_ID_TYPE_MEID, meid);
-
-                    return;
-                }
-            }
-
-            callback.onError(IGetDeviceIdCallback.ERROR_CANNOT_GET_DEVICE_ID);
-
         } catch (RemoteException e) {
             Slog.e(TAG, "getDeviceId() - Unable to send result to the callback", e);
         }
+
+        final TelephonyManager telephonyManager =
+                mContext.getSystemService(TelephonyManager.class);
+        int activeModemCount = telephonyManager.getActiveModemCount();
+        List<String> imeiList = new ArrayList<String>();
+        List<String> meidList = new ArrayList<String>();
+
+        if ((deviceIdTypeBitmap & (1 << DEVICE_ID_TYPE_IMEI)) != 0) {
+            for (int i = 0; i < activeModemCount; i++) {
+                String imei = telephonyManager.getImei(i);
+                if (!TextUtils.isEmpty(imei)) {
+                    imeiList.add(imei);
+                }
+            }
+        }
+
+        if ((deviceIdTypeBitmap & (1 << DEVICE_ID_TYPE_MEID)) != 0) {
+            for (int i = 0; i < activeModemCount; i++) {
+                String meid = telephonyManager.getMeid(i);
+                if (!TextUtils.isEmpty(meid)) {
+                    meidList.add(meid);
+                }
+            }
+        }
+
+        mDeviceLockControllerConnector.getDeviceId(
+            new OutcomeReceiver<>() {
+                @Override
+                public void onResult(String deviceId) {
+                    Slog.i(TAG, "Get Device ID ");
+                    try {
+                        if (meidList.contains(deviceId)) {
+                            callback.onDeviceIdReceived(DEVICE_ID_TYPE_MEID, deviceId);
+                            return;
+                        }
+                        if (imeiList.contains(deviceId)) {
+                            callback.onDeviceIdReceived(DEVICE_ID_TYPE_IMEI, deviceId);
+                            return;
+                        }
+                        // When a device ID is returned from DLC App, but none of the IDs
+                        // got from TelephonyManager matches that device ID.
+                        //
+                        // TODO(b/270392813): Send the device ID back to the callback
+                        // with UNSPECIFIED device ID type.
+                        callback.onError(IGetDeviceIdCallback.ERROR_CANNOT_GET_DEVICE_ID);
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "getDeviceId() - Unable to send result to the "
+                                + "callback", e);
+                    }
+                }
+
+                @Override
+                public void onError(Exception ex) {
+                    Slog.e(TAG, "Exception: ", ex);
+                    try {
+                        callback.onError(IGetDeviceIdCallback.ERROR_CANNOT_GET_DEVICE_ID);
+                    } catch (RemoteException e) {
+                        Slog.e(TAG, "getDeviceId() - Unable to send error to the "
+                                + "callback", e);
+                    }
+                }
+            }
+        );
     }
 
     @Override
@@ -255,13 +299,24 @@ final class DeviceLockServiceImpl extends IDeviceLockService.Stub {
     public void getKioskApps(@NonNull IGetKioskAppsCallback callback) {
         // Caller is not necessarily a kiosk app, and no particular permission enforcing is needed.
 
-        // TODO: return proper kiosk app info.
         final ArrayMap kioskApps = new ArrayMap<Integer, String>();
 
+        final UserHandle userHandle = Binder.getCallingUserHandle();
+        final RoleManager roleManager = mContext.getSystemService(RoleManager.class);
+        final long identity = Binder.clearCallingIdentity();
         try {
+            List<String> roleHolders = roleManager.getRoleHoldersAsUser(
+                    RoleManager.ROLE_FINANCED_DEVICE_KIOSK, userHandle);
+
+            if (!roleHolders.isEmpty()) {
+                kioskApps.put(DeviceLockManager.DEVICE_LOCK_ROLE_FINANCING, roleHolders.get(0));
+            }
+
             callback.onKioskAppsReceived(kioskApps);
         } catch (RemoteException e) {
             Slog.e(TAG, "getKioskApps() - Unable to send result to the callback", e);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
         }
     }
 
