@@ -16,6 +16,8 @@
 
 package com.android.devicelockcontroller.policy;
 
+import android.os.UserHandle;
+
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.time.Duration;
@@ -30,6 +32,15 @@ public interface DevicePolicyController {
      * device state. Returns false if package containing the activity is not in the allowlist.
      */
     ListenableFuture<Boolean> launchActivityInLockedMode();
+
+    /**
+     * Similar to
+     * {@link DevicePolicyController#launchActivityInLockedMode()} but the activity is started
+     * for the specified user.
+     *
+     * @param userHandle User handle for which the activity should be started.
+     */
+    ListenableFuture<Boolean> launchActivityInLockedModeAsUser(UserHandle userHandle);
 
     /**
      * Similar to
@@ -55,8 +66,12 @@ public interface DevicePolicyController {
     /**
      * Factory resets the device when the setup has failed and cannot continue.
      * Returns true if action was successful.
+     * <p>
+     * Using the new {@code DevicePolicyManager#wipeDevice()} introduced in Android U to
+     * reset the device. This is because the {@code DevicePolicyManager#wipeData()} no longer resets
+     * the device when called as the device owner, as it used to do in earlier Android versions.
      */
-    boolean wipeData();
+    boolean wipeDevice();
 
     /**
      * Get the State Controller associated with this Policy Controller.

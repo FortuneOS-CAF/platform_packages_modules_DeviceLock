@@ -186,10 +186,7 @@ public final class ReportDeviceProvisionStateWorker extends AbstractCheckInWorke
                         + Duration.ofMinutes(RESET_COUNT_DOWN_MINUTES).toMillis();
                 DeviceLockNotificationManager.sendDeviceResetTimerNotification(mContext,
                         countDownBase);
-                PendingIntent resetDeviceBroadcast = PendingIntent.getBroadcast(
-                        mContext, /* ignored */ 0,
-                        new Intent(mContext, ResetDeviceReceiver.class),
-                        PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+                PendingIntent resetDeviceBroadcast = getResetDevicePendingIntent(mContext);
                 AlarmManager alarmManager = mContext.getSystemService(AlarmManager.class);
                 Objects.requireNonNull(alarmManager).setExactAndAllowWhileIdle(
                         AlarmManager.ELAPSED_REALTIME_WAKEUP,
@@ -207,6 +204,16 @@ public final class ReportDeviceProvisionStateWorker extends AbstractCheckInWorke
     }
 
     /**
+     * Get a {@link PendingIntent} for resetting the device.
+     */
+    public static PendingIntent getResetDevicePendingIntent(Context context) {
+        return PendingIntent.getBroadcast(
+                context, /* ignored */ 0,
+                new Intent(context, ResetDeviceReceiver.class),
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    /**
      * A receiver that will reset the device when it receive a broadcast.
      */
     private static final class ResetDeviceReceiver extends BroadcastReceiver {
@@ -217,7 +224,7 @@ public final class ReportDeviceProvisionStateWorker extends AbstractCheckInWorke
                 throw new IllegalArgumentException("Can not handle implicit intent!");
             }
             ((PolicyObjectsInterface) context.getApplicationContext())
-                    .getPolicyController().wipeData();
+                    .getPolicyController().wipeDevice();
         }
     }
 }
