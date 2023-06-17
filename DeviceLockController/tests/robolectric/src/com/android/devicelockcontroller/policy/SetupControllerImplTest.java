@@ -63,7 +63,6 @@ import com.android.devicelockcontroller.storage.SetupParametersService;
 
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.testing.TestingExecutors;
 
 import org.junit.Before;
@@ -94,8 +93,6 @@ public final class SetupControllerImplTest {
 
     private static final String TEST_SETUP_ACTIVITY = "packagename/.activity";
     private static final String TEST_PACKAGE_NAME = "test.package.name";
-    public static final String DOWNLOAD_SUFFIX = "Download";
-    public static final String INSTALL_SUFFIX = "Install";
     public static final int ASYNC_TIMEOUT_MILLIS = 500;
 
     @Rule
@@ -117,8 +114,6 @@ public final class SetupControllerImplTest {
         mTestApplication = ApplicationProvider.getApplicationContext();
         mMockStateController = mTestApplication.getStateController();
         mMockPolicyController = mTestApplication.getPolicyController();
-        when(mMockPolicyController.launchActivityInLockedMode()).thenReturn(
-                Futures.immediateFuture(true));
         Shadows.shadowOf(mTestApplication).setComponentNameAndServiceForBindService(
                 new ComponentName(mTestApplication, SetupParametersService.class),
                 Robolectric.setupService(SetupParametersService.class).onBind(null));
@@ -148,7 +143,6 @@ public final class SetupControllerImplTest {
                 SetupController.SetupStatus.SETUP_FINISHED);
         Futures.getUnchecked(setupController.finishSetup());
         verify(mMockStateController).setNextStateForEvent(DeviceEvent.SETUP_COMPLETE);
-        verify(mMockPolicyController).launchActivityInLockedMode();
         verify(mMockPolicyController, never()).wipeDevice();
     }
 
@@ -164,7 +158,6 @@ public final class SetupControllerImplTest {
         Futures.getUnchecked(setupController.finishSetup());
         assertThat(setupController.getSetupState()).isEqualTo(
                 SetupController.SetupStatus.SETUP_FAILED);
-        verify(mMockPolicyController, never()).launchActivityInLockedMode();
         verify(mMockPolicyController).wipeDevice();
     }
 
@@ -353,16 +346,9 @@ public final class SetupControllerImplTest {
         return setupController;
     }
 
-    private final class TestWorkFactory extends WorkerFactory {
-
-        private final ListeningExecutorService mExecutorService;
-
+    private static final class TestWorkFactory extends WorkerFactory {
         private final ArrayMap<String, Integer> mResultMap =
                 new ArrayMap<>();
-
-        TestWorkFactory() {
-            mExecutorService = TestingExecutors.sameThreadScheduledExecutor();
-        }
 
         @Nullable
         @Override
@@ -370,7 +356,8 @@ public final class SetupControllerImplTest {
                 @NonNull Context context,
                 @NonNull String workerClassName,
                 @NonNull WorkerParameters workerParameters) {
-            return new AbstractTask(context, workerParameters) {
+            return new AbstractTask(context, workerParameters,
+                    TestingExecutors.sameThreadScheduledExecutor()) {
                 @NonNull
                 @Override
                 public ListenableFuture<Result> startWork() {
