@@ -47,11 +47,6 @@ public final class SetupParametersService extends Service {
                 }
 
                 @Override
-                public void dump() {
-                    SetupParameters.dumpParameters(mContext);
-                }
-
-                @Override
                 public void clear() {
                     SetupParameters.clear(mContext);
                 }

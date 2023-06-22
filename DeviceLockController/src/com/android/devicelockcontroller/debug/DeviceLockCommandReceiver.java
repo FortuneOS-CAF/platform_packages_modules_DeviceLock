@@ -74,7 +74,6 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             Commands.UNLOCK,
             Commands.CHECK_IN,
             Commands.CLEAR,
-            Commands.DUMP,
     })
     private @interface Commands {
         String RESET = "reset";
@@ -82,7 +81,6 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         String UNLOCK = "unlock";
         String CHECK_IN = "check-in";
         String CLEAR = "clear";
-        String DUMP = "dump";
     }
 
     @Override
@@ -125,28 +123,9 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             case Commands.CHECK_IN:
                 tryCheckIn(appContext);
                 break;
-            case Commands.DUMP:
-                dumpStorage();
-                break;
             default:
                 throw new IllegalArgumentException("Unsupported command: " + command);
         }
-    }
-
-    private static void dumpStorage() {
-        // TODO(b/286576135): add dumping for GlobalParameters and UserParameters
-        Futures.addCallback(SetupParametersClient.getInstance().dump(),
-                new FutureCallback<>() {
-                    @Override
-                    public void onSuccess(Void result) {
-                        LogUtil.i(TAG, "Successfully dumped storage");
-                    }
-
-                    @Override
-                    public void onFailure(Throwable t) {
-                        LogUtil.e(TAG, "Error encountered when dumping storage", t);
-                    }
-                }, MoreExecutors.directExecutor());
     }
 
     private static void tryCheckIn(Context appContext) {
