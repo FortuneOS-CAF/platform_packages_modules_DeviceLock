@@ -74,6 +74,7 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             Commands.UNLOCK,
             Commands.CHECK_IN,
             Commands.CLEAR,
+            Commands.DUMP,
     })
     private @interface Commands {
         String RESET = "reset";
@@ -81,6 +82,7 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         String UNLOCK = "unlock";
         String CHECK_IN = "check-in";
         String CLEAR = "clear";
+        String DUMP = "dump";
     }
 
     @Override
@@ -123,9 +125,31 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             case Commands.CHECK_IN:
                 tryCheckIn(appContext);
                 break;
+            case Commands.DUMP:
+                dumpStorage(context);
+                break;
             default:
                 throw new IllegalArgumentException("Unsupported command: " + command);
         }
+    }
+
+    private static void dumpStorage(Context context) {
+        Futures.addCallback(
+                Futures.transformAsync(SetupParametersClient.getInstance().dump(),
+                        unused -> GlobalParametersClient.getInstance().dump(),
+                        MoreExecutors.directExecutor()),
+                new FutureCallback<>() {
+                    @Override
+                    public void onSuccess(Void result) {
+                        UserParameters.dump(context);
+                        LogUtil.i(TAG, "Successfully dumped storage");
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        LogUtil.e(TAG, "Error encountered when dumping storage", t);
+                    }
+                }, MoreExecutors.directExecutor());
     }
 
     private static void tryCheckIn(Context appContext) {
@@ -177,12 +201,20 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         Objects.requireNonNull(alarmManager).cancel(
                 ReportDeviceProvisionStateWorker.getResetDevicePendingIntent(context));
 
+        DeviceStateController stateController =
+                ((PolicyObjectsInterface) context.getApplicationContext()).getStateController();
         ListenableFuture<Void> resetFuture = Futures.transformAsync(
                 // First clear restrictions
-                forceSetState(context, CLEARED),
+                stateController.isUnrestrictedState()
+                        ? Futures.immediateVoidFuture()
+                        : Futures.catching(forceSetState(context, CLEARED), RuntimeException.class,
+                                e -> {
+                                    LogUtil.w(TAG, "Failure encountered when force clear.", e);
+                                    return null;
+                                }, MoreExecutors.directExecutor()),
                 // Then clear storage, this will reset state to the default state which is
                 // UNPROVISIONED.
-                (Void unused) -> clearStorage(context),
+                unused -> clearStorage(context),
                 MoreExecutors.directExecutor());
         Futures.addCallback(
                 resetFuture,

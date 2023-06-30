@@ -26,6 +26,7 @@ import static com.android.devicelockcontroller.common.DeviceLockConstants.SetupF
 import static com.android.devicelockcontroller.policy.AbstractTask.ERROR_CODE_GET_PENDING_INTENT_FAILED;
 import static com.android.devicelockcontroller.policy.AbstractTask.ERROR_CODE_NO_PACKAGE_NAME;
 import static com.android.devicelockcontroller.policy.AbstractTask.TASK_RESULT_ERROR_CODE_KEY;
+import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceEvent.SETUP_PAUSE;
 
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
@@ -49,7 +50,9 @@ import com.android.devicelockcontroller.DeviceLockControllerApplication;
 import com.android.devicelockcontroller.common.DeviceLockConstants.SetupFailureReason;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceEvent;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceState;
+import com.android.devicelockcontroller.provision.worker.PauseProvisioningWorker;
 import com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionStateWorker;
+import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
 import com.android.devicelockcontroller.util.LogUtil;
 
@@ -104,6 +107,33 @@ public final class SetupControllerImpl implements SetupController {
         }
         LogUtil.v(TAG,
                 String.format(Locale.US, "Setup started with state = %d", mCurrentSetupState));
+    }
+
+    @Override
+    public void delaySetup() {
+        Futures.addCallback(
+                Futures.transformAsync(
+                        GlobalParametersClient.getInstance().setProvisionForced(true),
+                        unused -> mStateController.setNextStateForEvent(SETUP_PAUSE),
+                        MoreExecutors.directExecutor()),
+                new FutureCallback<>() {
+                    @Override
+                    public void onSuccess(Integer newState) {
+                        if (newState == DeviceState.SETUP_PAUSED) {
+                            WorkManager workManager = WorkManager.getInstance(mContext);
+                            PauseProvisioningWorker.reportProvisionPausedByUser(workManager);
+                            ResumeProvisioningWorker.scheduleResumeProvisioningWorker(workManager);
+                        } else {
+                            onFailure(new IllegalArgumentException(
+                                    "New state should not be: " + newState));
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        LogUtil.e(TAG, "Failed to delay setup", t);
+                    }
+                }, MoreExecutors.directExecutor());
     }
 
     @Override
@@ -255,7 +285,10 @@ public final class SetupControllerImpl implements SetupController {
     ListenableFuture<Void> finishSetup() {
         mCallbacks.remove(mReportStateCallbacks);
         if (mCurrentSetupState == SetupStatus.SETUP_FINISHED) {
-            return mStateController.setNextStateForEvent(DeviceEvent.SETUP_COMPLETE);
+            return Futures.transform(
+                    mStateController.setNextStateForEvent(DeviceEvent.SETUP_COMPLETE),
+                    (Integer unused) -> null,
+                    MoreExecutors.directExecutor());
         } else if (mCurrentSetupState == SetupStatus.SETUP_FAILED) {
             return Futures.transform(
                     SetupParametersClient.getInstance().isProvisionMandatory(),

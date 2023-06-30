@@ -40,8 +40,12 @@ public interface DeviceStateController {
 
     /**
      * Moves the device to a new state based on the input event
+     *
+     * @return The next state {@link DeviceState} after the event, or an
+     * {@code ImmediateFailedFuture} if the state transition failed.
      */
-    ListenableFuture<Void> setNextStateForEvent(@DeviceEvent int event);
+    @DeviceState
+    ListenableFuture<Integer> setNextStateForEvent(@DeviceEvent int event);
 
     /**
      * Returns the current state of the device
@@ -53,6 +57,16 @@ public interface DeviceStateController {
      * Returns true if the device is in locked state including {@link DeviceState#PSEUDO_LOCKED}
      */
     boolean isLocked();
+
+    /**
+     * Returns true if the device is in a state where no restrictions are applied which includes
+     * following states:
+     * - {@link DeviceState#UNPROVISIONED};
+     * - {@link DeviceState#CLEARED};
+     * - {@link DeviceState#PSEUDO_LOCKED};
+     * - {@link DeviceState#PSEUDO_UNLOCKED};
+     */
+    boolean isUnrestrictedState();
 
     /**
      * Returns true if the device is in locked state excluding {@link DeviceState#PSEUDO_LOCKED}
