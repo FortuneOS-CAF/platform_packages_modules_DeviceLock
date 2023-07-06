@@ -204,12 +204,12 @@ final class DeviceLockControllerConnector {
                 unbindLocked();
             }
         }
-    };
+    }
 
     /**
      * Create a new connector to the Device Lock Controller service.
      *
-     * @param context the context for this call.
+     * @param context       the context for this call.
      * @param componentName Device Lock Controller service component name.
      */
     DeviceLockControllerConnector(@NonNull Context context,
@@ -299,7 +299,7 @@ final class DeviceLockControllerConnector {
                 mDeviceLockControllerService.lockDevice(remoteCallback);
                 return null;
             }
-        } , callback);
+        }, callback);
 
     }
 

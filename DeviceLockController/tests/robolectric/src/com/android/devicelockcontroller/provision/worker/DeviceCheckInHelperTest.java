@@ -30,6 +30,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.robolectric.annotation.LooperMode.Mode.LEGACY;
 
+import android.os.SystemClock;
 import android.telephony.TelephonyManager;
 import android.util.ArraySet;
 
@@ -159,7 +160,6 @@ public final class DeviceCheckInHelperTest {
                 response, stateController, policyController)).isTrue();
 
         verify(stateController).setNextStateForEvent(eq(DeviceEvent.PROVISIONING_SUCCESS));
-        verify(policyController).enqueueStartLockTaskModeWorker(eq(IS_PROVISIONING_MANDATORY));
         assertThat(Futures.getUnchecked(mGlobalParametersClient.needCheckIn())).isFalse();
     }
 
@@ -180,14 +180,14 @@ public final class DeviceCheckInHelperTest {
     public void testHandleGetDeviceCheckInStatusResponse_retryCheckIn_shouldEnqueueNewCheckInWork()
             throws ExecutionException, InterruptedException, TimeoutException {
         final GetDeviceCheckInStatusGrpcResponse response = createRetryResponse(
-                Instant.now().plus(TEST_CHECK_RETRY_DURATION));
+                SystemClock.currentNetworkTimeClock().instant().plus(TEST_CHECK_RETRY_DURATION));
 
         assertThat(mHelper.handleGetDeviceCheckInStatusResponse(response)).isTrue();
 
         WorkManager workManager = WorkManager.getInstance(mTestApplication);
 
         List<WorkInfo> workInfo = workManager.getWorkInfosForUniqueWork(
-                DeviceCheckInHelper.CHECK_IN_WORK_NAME).get(GET_WORK_INFO_TIMEOUT_MILLIS,
+                DeviceCheckInHelper.DEVICE_CHECK_IN_WORK_NAME).get(GET_WORK_INFO_TIMEOUT_MILLIS,
                 TimeUnit.MILLISECONDS);
         assertThat(workInfo.size()).isEqualTo(1);
     }
@@ -196,14 +196,15 @@ public final class DeviceCheckInHelperTest {
     public void handleGetDeviceCheckInStatusResponse_retryCheckIn_durationIsNegative_shouldRetry()
             throws ExecutionException, InterruptedException, TimeoutException {
         final GetDeviceCheckInStatusGrpcResponse response = createRetryResponse(
-                Instant.now().plus(TEST_NEGATIVE_CHECK_RETRY_DURATION));
+                SystemClock.currentNetworkTimeClock().instant().plus(
+                        TEST_NEGATIVE_CHECK_RETRY_DURATION));
 
         assertThat(mHelper.handleGetDeviceCheckInStatusResponse(response)).isTrue();
 
         WorkManager workManager = WorkManager.getInstance(mTestApplication);
 
         List<WorkInfo> workInfo = workManager.getWorkInfosForUniqueWork(
-                DeviceCheckInHelper.CHECK_IN_WORK_NAME).get(GET_WORK_INFO_TIMEOUT_MILLIS,
+                DeviceCheckInHelper.DEVICE_CHECK_IN_WORK_NAME).get(GET_WORK_INFO_TIMEOUT_MILLIS,
                 TimeUnit.MILLISECONDS);
         assertThat(workInfo.size()).isEqualTo(1);
     }

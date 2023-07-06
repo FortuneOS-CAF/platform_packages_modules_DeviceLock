@@ -87,11 +87,15 @@ public final class DeviceStateControllerImpl implements DeviceStateController {
 
     @Override
     public boolean isLocked() {
+        return isLockedInternal() || mState == DeviceState.PSEUDO_LOCKED;
+    }
+
+    @Override
+    public boolean isLockedInternal() {
         return mState == DeviceState.SETUP_IN_PROGRESS
                 || mState == DeviceState.SETUP_SUCCEEDED
                 || mState == DeviceState.KIOSK_SETUP
-                || mState == DeviceState.LOCKED
-                || mState == DeviceState.PSEUDO_LOCKED;
+                || mState == DeviceState.LOCKED;
     }
 
     @Override
@@ -132,13 +136,20 @@ public final class DeviceStateControllerImpl implements DeviceStateController {
                     return DeviceState.SETUP_IN_PROGRESS;
                 }
                 break;
-            case DeviceEvent.SETUP_SUCCESS:
+            case DeviceEvent.SETUP_PAUSE:
                 if (mState == DeviceState.SETUP_IN_PROGRESS) {
+                    return DeviceState.SETUP_PAUSED;
+                }
+                break;
+            case DeviceEvent.SETUP_SUCCESS:
+                if (mState == DeviceState.SETUP_IN_PROGRESS
+                        || mState == DeviceState.SETUP_PAUSED) {
                     return DeviceState.SETUP_SUCCEEDED;
                 }
                 break;
             case DeviceEvent.SETUP_FAILURE:
-                if (mState == DeviceState.SETUP_IN_PROGRESS) {
+                if (mState == DeviceState.SETUP_IN_PROGRESS
+                        || mState == DeviceState.SETUP_PAUSED) {
                     return DeviceState.SETUP_FAILED;
                 }
                 break;
@@ -170,6 +181,11 @@ public final class DeviceStateControllerImpl implements DeviceStateController {
                         || mState == DeviceState.UNLOCKED
                         || mState == DeviceState.KIOSK_SETUP) {
                     return DeviceState.CLEARED;
+                }
+                break;
+            case DeviceEvent.SETUP_RESUME:
+                if (mState == DeviceState.SETUP_PAUSED) {
+                    return DeviceState.SETUP_IN_PROGRESS;
                 }
                 break;
             default:

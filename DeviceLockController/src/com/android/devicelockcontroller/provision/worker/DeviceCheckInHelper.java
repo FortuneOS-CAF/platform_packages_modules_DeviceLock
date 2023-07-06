@@ -29,6 +29,7 @@ import static com.android.devicelockcontroller.policy.DeviceStateController.Devi
 
 import android.content.Context;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.telephony.TelephonyManager;
 import android.util.ArraySet;
 
@@ -59,16 +60,15 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
+import java.time.DateTimeException;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Locale;
 
 /**
  * Helper class to perform the device check-in process with device lock backend server
  */
 public final class DeviceCheckInHelper extends AbstractDeviceCheckInHelper {
-    @VisibleForTesting
-    public static final String CHECK_IN_WORK_NAME = "checkIn";
+    public static final String DEVICE_CHECK_IN_WORK_NAME = "device-check-in";
     private static final String TAG = "DeviceCheckInHelper";
     private static final int CHECK_IN_INTERVAL_HOURS = 1;
     private final Context mAppContext;
@@ -106,7 +106,7 @@ public final class DeviceCheckInHelper extends AbstractDeviceCheckInHelper {
                         .setBackoffCriteria(BackoffPolicy.LINEAR,
                                 Duration.ofHours(CHECK_IN_INTERVAL_HOURS));
         if (isExpedited) builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST);
-        WorkManager.getInstance(mAppContext).enqueueUniqueWork(CHECK_IN_WORK_NAME,
+        WorkManager.getInstance(mAppContext).enqueueUniqueWork(DEVICE_CHECK_IN_WORK_NAME,
                 ExistingWorkPolicy.REPLACE, builder.build());
     }
 
@@ -156,7 +156,6 @@ public final class DeviceCheckInHelper extends AbstractDeviceCheckInHelper {
     @Override
     @NonNull
     String getCarrierInfo() {
-        // TODO(b/267507927): Figure out if we need carrier info of all sims.
         return mTelephonyManager.getSimOperator();
     }
 
@@ -166,7 +165,7 @@ public final class DeviceCheckInHelper extends AbstractDeviceCheckInHelper {
             @NonNull GetDeviceCheckInStatusGrpcResponse response) {
         Futures.getUnchecked(GlobalParametersClient.getInstance().setRegisteredDeviceId(
                 response.getRegisteredDeviceIdentifier()));
-        LogUtil.d(TAG, "check in succeed: " + response.getDeviceCheckInStatus());
+        LogUtil.d(TAG, "check in response: " + response.getDeviceCheckInStatus());
         switch (response.getDeviceCheckInStatus()) {
             case READY_FOR_PROVISION:
                 PolicyObjectsInterface policies =
@@ -176,10 +175,18 @@ public final class DeviceCheckInHelper extends AbstractDeviceCheckInHelper {
                         policies.getStateController(),
                         policies.getPolicyController());
             case RETRY_CHECK_IN:
-                Duration delay = Duration.between(Instant.now(), response.getNextCheckInTime());
-                delay = delay.isNegative() ? Duration.ZERO : delay;
-                enqueueDeviceCheckInWork(false, delay);
-                return true;
+                try {
+                    Duration delay = Duration.between(
+                            SystemClock.currentNetworkTimeClock().instant(),
+                            response.getNextCheckInTime());
+                    // Retry immediately if next check in time is in the past.
+                    delay = delay.isNegative() ? Duration.ZERO : delay;
+                    enqueueDeviceCheckInWork(false, delay);
+                    return true;
+                } catch (DateTimeException e) {
+                    LogUtil.e(TAG, "No network time is available!");
+                    return false;
+                }
             case STOP_CHECK_IN:
                 Futures.getUnchecked(GlobalParametersClient.getInstance().setNeedCheckIn(false));
                 return true;
@@ -226,7 +233,6 @@ public final class DeviceCheckInHelper extends AbstractDeviceCheckInHelper {
                         String.format(Locale.US,
                                 "State transition succeeded for event: %s",
                                 DeviceStateController.eventToString(PROVISIONING_SUCCESS)));
-                devicePolicyController.enqueueStartLockTaskModeWorker(isMandatory);
             }
 
             @Override
