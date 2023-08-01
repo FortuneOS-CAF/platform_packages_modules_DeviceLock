@@ -16,47 +16,30 @@
 
 package com.android.devicelockcontroller.policy;
 
-import com.google.common.util.concurrent.ListenableFuture;
+import android.content.Intent;
 
-import java.time.Duration;
+import com.google.common.util.concurrent.ListenableFuture;
 
 /**
  * Interface for the policy controller that is responsible for applying policies based
  * on state.
  */
 public interface DevicePolicyController {
-    /**
-     * Launches an activity in locked mode. The specific activity is resolved based on the current
-     * device state. Returns false if package containing the activity is not in the allowlist.
-     */
-    ListenableFuture<Boolean> launchActivityInLockedMode();
 
     /**
-     * Similar to
-     * {@link DevicePolicyController#enqueueStartLockTaskModeWorkerWithDelay(boolean, Duration)}
-     * but with zero delay.
-     *
-     * @param isMandatory whether starting lock task mode is mandatory at the time of request.
+     * Get the intent to launch the locked activity for the current device state asynchronously.
      */
-    void enqueueStartLockTaskModeWorker(boolean isMandatory);
-
-    /**
-     * Enqueue a worker to start lock task mode and launch corresponding activity with a delay of
-     * certain {@link Duration}.
-     * The work will be retried until device is in lock task mode.
-     *
-     * @param isMandatory whether starting lock task mode is mandatory at the time of request.
-     * @param delay       The {@link Duration} that should be delayed before device enters lock
-     *                    task mode.
-     */
-    void enqueueStartLockTaskModeWorkerWithDelay(boolean isMandatory, Duration delay);
-
+    ListenableFuture<Intent> getLaunchIntentForCurrentLockedActivity();
 
     /**
      * Factory resets the device when the setup has failed and cannot continue.
      * Returns true if action was successful.
+     * <p>
+     * Using the new {@code DevicePolicyManager#wipeDevice()} introduced in Android U to
+     * reset the device. This is because the {@code DevicePolicyManager#wipeData()} no longer resets
+     * the device when called as the device owner, as it used to do in earlier Android versions.
      */
-    boolean wipeData();
+    boolean wipeDevice();
 
     /**
      * Get the State Controller associated with this Policy Controller.

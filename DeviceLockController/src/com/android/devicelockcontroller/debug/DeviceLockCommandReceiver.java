@@ -23,6 +23,7 @@ import static com.android.devicelockcontroller.policy.DeviceStateController.Devi
 
 import static java.lang.annotation.RetentionPolicy.SOURCE;
 
+import android.app.AlarmManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -31,10 +32,16 @@ import android.os.UserManager;
 import android.text.TextUtils;
 
 import androidx.annotation.StringDef;
+import androidx.work.WorkManager;
 
 import com.android.devicelockcontroller.policy.DeviceStateController;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceState;
 import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
+import com.android.devicelockcontroller.provision.worker.DeviceCheckInHelper;
+import com.android.devicelockcontroller.provision.worker.DeviceCheckInWorker;
+import com.android.devicelockcontroller.provision.worker.PauseProvisioningWorker;
+import com.android.devicelockcontroller.provision.worker.ReportDeviceLockProgramCompleteWorker;
+import com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionStateWorker;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
 import com.android.devicelockcontroller.storage.UserParameters;
@@ -46,6 +53,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import java.lang.annotation.Retention;
+import java.util.Objects;
 
 /**
  * A {@link BroadcastReceiver} that can handle reset, lock, unlock command.
@@ -64,11 +72,17 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             Commands.RESET,
             Commands.LOCK,
             Commands.UNLOCK,
+            Commands.CHECK_IN,
+            Commands.CLEAR,
+            Commands.DUMP,
     })
     private @interface Commands {
         String RESET = "reset";
         String LOCK = "lock";
         String UNLOCK = "unlock";
+        String CHECK_IN = "check-in";
+        String CLEAR = "clear";
+        String DUMP = "dump";
     }
 
     @Override
@@ -88,22 +102,75 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             return;
         }
 
+        Context appContext = context.getApplicationContext();
+
         @Commands
         String command = String.valueOf(intent.getStringExtra(EXTRA_COMMAND));
         switch (command) {
             case Commands.RESET:
-                forceReset(context);
+                forceReset(appContext);
                 break;
             case Commands.LOCK:
-                Futures.addCallback(forceSetState(context, LOCKED),
+                Futures.addCallback(forceSetState(appContext, LOCKED),
                         getSetStateCallBack(LOCKED), MoreExecutors.directExecutor());
                 break;
             case Commands.UNLOCK:
-                Futures.addCallback(forceSetState(context, UNLOCKED),
+                Futures.addCallback(forceSetState(appContext, UNLOCKED),
                         getSetStateCallBack(UNLOCKED), MoreExecutors.directExecutor());
+                break;
+            case Commands.CLEAR:
+                Futures.addCallback(forceSetState(appContext, CLEARED),
+                        getSetStateCallBack(CLEARED), MoreExecutors.directExecutor());
+                break;
+            case Commands.CHECK_IN:
+                tryCheckIn(appContext);
+                break;
+            case Commands.DUMP:
+                dumpStorage();
                 break;
             default:
                 throw new IllegalArgumentException("Unsupported command: " + command);
+        }
+    }
+
+    private static void dumpStorage() {
+        // TODO(b/286576135): add dumping for GlobalParameters and UserParameters
+        Futures.addCallback(SetupParametersClient.getInstance().dump(),
+                new FutureCallback<>() {
+                    @Override
+                    public void onSuccess(Void result) {
+                        LogUtil.i(TAG, "Successfully dumped storage");
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        LogUtil.e(TAG, "Error encountered when dumping storage", t);
+                    }
+                }, MoreExecutors.directExecutor());
+    }
+
+    private static void tryCheckIn(Context appContext) {
+        if (((PolicyObjectsInterface) appContext).getStateController().isCheckInNeeded()) {
+            Futures.addCallback(GlobalParametersClient.getInstance().needCheckIn(),
+                    new FutureCallback<>() {
+                        @Override
+                        public void onSuccess(Boolean needCheckIn) {
+                            if (needCheckIn) {
+                                new DeviceCheckInHelper(appContext)
+                                        .enqueueDeviceCheckInWork(/* isExpedited= */ false);
+                            } else {
+                                LogUtil.e(TAG,
+                                        "Can not check in at current state!\n"
+                                                + "Use reset command to reset DLC first.");
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(Throwable t) {
+                            LogUtil.e(TAG, "Failed to know if we need to perform check-in!",
+                                    t);
+                        }
+                    }, MoreExecutors.directExecutor());
         }
     }
 
@@ -116,6 +183,21 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
     }
 
     private static void forceReset(Context context) {
+        // Cancel provision works
+        LogUtil.d(TAG, "cancelling works");
+        WorkManager workManager = WorkManager.getInstance(context);
+        workManager.cancelAllWorkByTag(DeviceCheckInWorker.class.getName());
+        workManager.cancelAllWorkByTag(PauseProvisioningWorker.class.getName());
+        workManager.cancelAllWorkByTag(
+                ReportDeviceProvisionStateWorker.class.getName());
+        workManager.cancelAllWorkByTag(
+                ReportDeviceLockProgramCompleteWorker.class.getName());
+
+        // Cancel reset device alarm
+        AlarmManager alarmManager = context.getSystemService(AlarmManager.class);
+        Objects.requireNonNull(alarmManager).cancel(
+                ReportDeviceProvisionStateWorker.getResetDevicePendingIntent(context));
+
         ListenableFuture<Void> resetFuture = Futures.transformAsync(
                 // First clear restrictions
                 forceSetState(context, CLEARED),

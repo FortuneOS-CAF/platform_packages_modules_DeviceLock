@@ -18,7 +18,6 @@ package com.android.devicelockcontroller.policy;
 
 import static android.app.admin.DevicePolicyManager.LOCK_TASK_FEATURE_NOTIFICATIONS;
 
-import static com.android.devicelockcontroller.policy.DevicePolicyControllerImpl.START_LOCK_TASK_MODE_WORK_NAME;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.CLEARED;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.KIOSK_SETUP;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.LOCKED;
@@ -26,9 +25,11 @@ import static com.android.devicelockcontroller.policy.DeviceStateController.Devi
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.PSEUDO_UNLOCKED;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.SETUP_FAILED;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.SETUP_IN_PROGRESS;
+import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.SETUP_PAUSED;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.SETUP_SUCCEEDED;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.UNLOCKED;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.UNPROVISIONED;
+import static com.android.devicelockcontroller.policy.StartLockTaskModeWorker.START_LOCK_TASK_MODE_WORK_NAME;
 
 import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
@@ -65,16 +66,19 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
     @VisibleForTesting
     static final int DEFAULT_LOCK_TASK_FEATURES =
             (DevicePolicyManager.LOCK_TASK_FEATURE_SYSTEM_INFO
-             | DevicePolicyManager.LOCK_TASK_FEATURE_KEYGUARD
-             | DevicePolicyManager.LOCK_TASK_FEATURE_HOME
-             | DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS
-             | DevicePolicyManager.LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK);
+                    | DevicePolicyManager.LOCK_TASK_FEATURE_KEYGUARD
+                    | DevicePolicyManager.LOCK_TASK_FEATURE_HOME
+                    | DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS
+                    | DevicePolicyManager.LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK);
     private static final String TAG = "LockTaskModePolicyHandler";
     private final Context mContext;
     private final DevicePolicyManager mDpm;
+    private final DevicePolicyController mPolicyController;
 
-    LockTaskModePolicyHandler(Context context, DevicePolicyManager dpm) {
+    LockTaskModePolicyHandler(Context context, DevicePolicyManager dpm,
+            DevicePolicyController policyController) {
         mContext = context;
+        mPolicyController = policyController;
         mDpm = dpm;
     }
 
@@ -94,14 +98,19 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
             case UNPROVISIONED:
                 return Futures.immediateFuture(SUCCESS);
             case SETUP_FAILED:
+            case SETUP_PAUSED:
             case UNLOCKED:
             case CLEARED:
                 return disableLockTaskMode();
             case SETUP_IN_PROGRESS:
             case SETUP_SUCCEEDED:
+                return Futures.transformAsync(composeAllowlist(/* includeController= */ true),
+                        empty -> enableLockTaskMode(),
+                        MoreExecutors.directExecutor());
             case KIOSK_SETUP:
             case LOCKED:
-                return Futures.transformAsync(composeAllowlist(), empty -> enableLockTaskMode(),
+                return Futures.transformAsync(composeAllowlist(/* includeController= */ false),
+                        empty -> enableLockTaskMode(),
                         MoreExecutors.directExecutor());
             default:
                 return Futures.immediateFailedFuture(
@@ -113,7 +122,7 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
      * Sets the activity as the preferred activity for home intent. Activity is cleared when the
      * device leaves lock task mode.
      */
-    public boolean setPreferredActivityForHome(ComponentName activity) {
+    private boolean setPreferredActivityForHome(ComponentName activity) {
         if (!mDpm.isLockTaskPermitted(activity.getPackageName())) {
             LogUtil.e(TAG, String.format(Locale.US, "%s is not permitted in lock task mode",
                     activity.getPackageName()));
@@ -161,7 +170,10 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
     private @ResultType ListenableFuture<@ResultType Integer> enableLockTaskMode() {
         ListenableFuture<Boolean> notificationsInLockTaskModeEnabled =
                 SetupParametersClient.getInstance().isNotificationsInLockTaskModeEnabled();
+        ListenableFuture<Intent> launchIntent =
+                mPolicyController.getLaunchIntentForCurrentLockedActivity();
         return Futures.whenAllSucceed(
+                        launchIntent,
                         notificationsInLockTaskModeEnabled,
                         updateAllowlist())
                 .call(
@@ -171,6 +183,8 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
                                 flags |= LOCK_TASK_FEATURE_NOTIFICATIONS;
                             }
                             mDpm.setLockTaskFeatures(null, flags);
+                            setPreferredActivityForHome(
+                                    Futures.getDone(launchIntent).getComponent());
                             return SUCCESS;
                         }, mContext.getMainExecutor());
     }
@@ -203,7 +217,7 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
      *   4. Kiosk app
      *   5. Append the packages allow-listed through setup parameters.
      */
-    private ListenableFuture<Void> composeAllowlist() {
+    private ListenableFuture<Void> composeAllowlist(boolean includeController) {
         final String[] allowlistArray =
                 mContext.getResources().getStringArray(R.array.lock_task_allowlist);
         final ArrayList<String> allowlistPackages = new ArrayList<>(Arrays.asList(allowlistArray));
@@ -211,20 +225,26 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
         allowlistSystemAppForAction(Settings.ACTION_SETTINGS, allowlistPackages);
         allowlistInputMethod(allowlistPackages);
         allowlistCellBroadcastReceiver(allowlistPackages);
-        final ListenableFuture<String> kioskPackageTask =
-                SetupParametersClient.getInstance().getKioskPackage();
-        final ListenableFuture<List<String>> kioskAllowlistTask =
-                SetupParametersClient.getInstance().getKioskAllowlist();
-        return Futures.transformAsync(
-                Futures.whenAllSucceed(kioskPackageTask, kioskAllowlistTask).call(
-                        () -> {
-                            allowlistPackages.add(Futures.getDone(kioskPackageTask));
-                            allowlistPackages.addAll(Futures.getDone(kioskAllowlistTask));
-                            return allowlistPackages;
-                        }, mContext.getMainExecutor()),
-                packagesList ->
-                        GlobalParametersClient.getInstance().setLockTaskAllowlist(packagesList),
-                mContext.getMainExecutor());
+        if (includeController) {
+            allowlistPackages.add(mContext.getPackageName());
+            return GlobalParametersClient.getInstance().setLockTaskAllowlist(allowlistPackages);
+
+        } else {
+            final ListenableFuture<String> kioskPackageTask =
+                    SetupParametersClient.getInstance().getKioskPackage();
+            final ListenableFuture<List<String>> kioskAllowlistTask =
+                    SetupParametersClient.getInstance().getKioskAllowlist();
+            return Futures.transformAsync(
+                    Futures.whenAllSucceed(kioskPackageTask, kioskAllowlistTask).call(
+                            () -> {
+                                allowlistPackages.add(Futures.getDone(kioskPackageTask));
+                                allowlistPackages.addAll(Futures.getDone(kioskAllowlistTask));
+                                return allowlistPackages;
+                            }, mContext.getMainExecutor()),
+                    packagesList ->
+                            GlobalParametersClient.getInstance().setLockTaskAllowlist(packagesList),
+                    mContext.getMainExecutor());
+        }
     }
 
     private void allowlistSystemAppForAction(String action, List<String> allowlistPackages) {

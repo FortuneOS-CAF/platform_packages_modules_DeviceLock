@@ -20,6 +20,8 @@ import static com.android.devicelockcontroller.common.DeviceLockConstants.REASON
 import static com.android.devicelockcontroller.common.DeviceLockConstants.USER_DEFERRED_DEVICE_PROVISIONING;
 
 import android.content.Context;
+import android.os.Build;
+import android.os.SystemProperties;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
@@ -31,7 +33,8 @@ import androidx.work.OneTimeWorkRequest;
 import androidx.work.WorkManager;
 import androidx.work.WorkerParameters;
 
-import com.android.devicelockcontroller.policy.DevicePolicyController;
+import com.android.devicelockcontroller.policy.DeviceStateController;
+import com.android.devicelockcontroller.policy.DeviceStateController.DeviceEvent;
 import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
 import com.android.devicelockcontroller.provision.grpc.DeviceCheckInClient;
 import com.android.devicelockcontroller.provision.grpc.PauseDeviceProvisioningGrpcResponse;
@@ -39,6 +42,9 @@ import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.util.LogUtil;
 
 import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import java.time.Duration;
 
@@ -46,11 +52,13 @@ import java.time.Duration;
  * A worker class dedicated to request pause of provisioning for device lock program.
  */
 public final class PauseProvisioningWorker extends AbstractCheckInWorker {
-
     private static final String KEY_PAUSE_DEVICE_PROVISIONING_REASON =
             "PAUSE_DEVICE_PROVISIONING_REASON";
-    private static final String REPORT_PROVISION_PAUSED_BY_USER_WORK =
+    public static final String REPORT_PROVISION_PAUSED_BY_USER_WORK =
             "report-provision-paused-by-user";
+    static final String PROVISION_PAUSED_MINUTES_SYS_PROPERTY_KEY =
+            "debug.devicelock.paused-minutes";
+    static final int PROVISION_PAUSED_MINUTES_DEFAULT = 60;
     @VisibleForTesting
     static final int PROVISION_PAUSED_HOUR = 1;
 
@@ -70,41 +78,50 @@ public final class PauseProvisioningWorker extends AbstractCheckInWorker {
                         .setInputData(inputData)
                         .build();
         workManager.enqueueUniqueWork(REPORT_PROVISION_PAUSED_BY_USER_WORK,
-                ExistingWorkPolicy.REPLACE, work);
+                ExistingWorkPolicy.KEEP, work);
     }
 
     public PauseProvisioningWorker(@NonNull Context context,
-            @NonNull WorkerParameters workerParams) {
-        super(context, workerParams);
+            @NonNull WorkerParameters workerParams, ListeningExecutorService executorService) {
+        super(context, workerParams, null, executorService);
     }
 
     @VisibleForTesting
     PauseProvisioningWorker(@NonNull Context context, @NonNull WorkerParameters workerParams,
-            DeviceCheckInClient client) {
-        super(context, workerParams, client);
+            DeviceCheckInClient client, ListeningExecutorService executorService) {
+        super(context, workerParams, client, executorService);
     }
 
     @NonNull
     @Override
-    public Result doWork() {
-        final int reason = getInputData().getInt(KEY_PAUSE_DEVICE_PROVISIONING_REASON,
-                REASON_UNSPECIFIED);
-        PauseDeviceProvisioningGrpcResponse response =
-                Futures.getUnchecked(mClient).pauseDeviceProvisioning(reason);
-        if (response.isSuccessful()) {
-            boolean shouldForceProvisioning = response.shouldForceProvisioning();
-            Futures.getUnchecked(GlobalParametersClient.getInstance().setProvisionForced(
-                    shouldForceProvisioning));
-            DevicePolicyController policyController =
-                    ((PolicyObjectsInterface) mContext.getApplicationContext())
-                            .getPolicyController();
-            //TODO: Cancel the work if user starts provisioning within 1 hr.
-            policyController.enqueueStartLockTaskModeWorkerWithDelay(
-                    /* isMandatory= */ false,
-                    Duration.ofHours(PROVISION_PAUSED_HOUR));
-            return Result.success();
-        }
-        LogUtil.w(TAG, "Pause provisioning request failed: " + response);
-        return Result.failure();
+    public ListenableFuture<Result> startWork() {
+        return Futures.transform(mClient, client -> {
+            int reason = getInputData().getInt(KEY_PAUSE_DEVICE_PROVISIONING_REASON,
+                    REASON_UNSPECIFIED);
+            PauseDeviceProvisioningGrpcResponse response = client.pauseDeviceProvisioning(reason);
+            if (response.hasRecoverableError()) {
+                return Result.retry();
+            }
+            if (response.isSuccessful()) {
+                boolean shouldForceProvisioning = response.shouldForceProvisioning();
+                Futures.getUnchecked(GlobalParametersClient.getInstance().setProvisionForced(
+                        shouldForceProvisioning));
+                PolicyObjectsInterface policyObjects =
+                        (PolicyObjectsInterface) mContext.getApplicationContext();
+                Duration delay = Build.isDebuggable()
+                        ? Duration.ofMinutes(SystemProperties.getInt(
+                                PROVISION_PAUSED_MINUTES_SYS_PROPERTY_KEY,
+                                PROVISION_PAUSED_MINUTES_DEFAULT))
+                        : Duration.ofHours(PROVISION_PAUSED_HOUR);
+                ResumeProvisioningWorker.scheduleResumeProvisioningWorker(
+                        WorkManager.getInstance(mContext), delay);
+                DeviceStateController deviceStateController = policyObjects.getStateController();
+                Futures.getUnchecked(
+                        deviceStateController.setNextStateForEvent(DeviceEvent.SETUP_PAUSE));
+                return Result.success();
+            }
+            LogUtil.w(TAG, "Pause provisioning request failed: " + response);
+            return Result.failure();
+        }, MoreExecutors.directExecutor());
     }
 }

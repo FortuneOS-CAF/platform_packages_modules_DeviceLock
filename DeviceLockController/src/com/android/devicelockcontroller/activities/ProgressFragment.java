@@ -23,6 +23,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import androidx.annotation.Nullable;
@@ -30,6 +31,7 @@ import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
 
 import com.android.devicelockcontroller.R;
+import com.android.devicelockcontroller.activities.util.UrlUtils;
 
 /**
  * A screen which always displays a progress bar.
@@ -61,6 +63,12 @@ public final class ProgressFragment extends Fragment {
         TextView subheaderTextView = v.findViewById(R.id.subheader_text);
         checkNotNull(subheaderTextView);
 
+        ProgressBar progressBar = v.findViewById(R.id.progress_bar);
+        checkNotNull(progressBar);
+
+        View bottomView = v.findViewById(R.id.bottom);
+        checkNotNull(bottomView);
+
         ProvisioningProgressViewModel provisioningProgressViewModel =
                 new ViewModelProvider(requireActivity()).get(ProvisioningProgressViewModel.class);
         provisioningProgressViewModel.getProvisioningProgressLiveData().observe(
@@ -75,8 +83,21 @@ public final class ProgressFragment extends Fragment {
                                                 .mProviderNameLiveData.getValue()));
                     }
                     if (provisioningProgress.mSubheaderId != 0) {
-                        subheaderTextView.setText(
-                                requireContext().getString(provisioningProgress.mSubheaderId));
+                        UrlUtils.setUrlText(subheaderTextView,
+                                requireContext().getString(provisioningProgress.mSubheaderId,
+                                        provisioningProgressViewModel
+                                                .mSupportUrlLiveData
+                                                .getValue()));
+                    }
+                    if (provisioningProgress.mProgressBarVisible) {
+                        progressBar.setVisibility(View.VISIBLE);
+                    } else {
+                        progressBar.setVisibility(View.GONE);
+                    }
+                    if (provisioningProgress.mBottomViewVisible) {
+                        bottomView.setVisibility(View.VISIBLE);
+                    } else {
+                        bottomView.setVisibility(View.GONE);
                     }
                 });
 

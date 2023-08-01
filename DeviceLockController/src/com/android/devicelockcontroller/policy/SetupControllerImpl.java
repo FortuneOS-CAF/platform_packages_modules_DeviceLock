@@ -87,12 +87,15 @@ public final class SetupControllerImpl implements SetupController {
             Context context,
             DeviceStateController stateController,
             DevicePolicyController policyController) {
-        this.mContext = context;
-        this.mStateController = stateController;
-        this.mPolicyController = policyController;
+        mContext = context;
+        mStateController = stateController;
+        mPolicyController = policyController;
         int state = stateController.getState();
-        if (state == DeviceState.SETUP_IN_PROGRESS || state == DeviceState.UNPROVISIONED
-                || state == DeviceState.PSEUDO_UNLOCKED || state == DeviceState.PSEUDO_LOCKED) {
+        if (state == DeviceState.SETUP_IN_PROGRESS
+                || state == DeviceState.SETUP_PAUSED
+                || state == DeviceState.UNPROVISIONED
+                || state == DeviceState.PSEUDO_UNLOCKED
+                || state == DeviceState.PSEUDO_LOCKED) {
             mCurrentSetupState = SetupStatus.SETUP_NOT_STARTED;
         } else if (state == DeviceState.SETUP_FAILED) {
             mCurrentSetupState = SetupStatus.SETUP_FAILED;
@@ -252,21 +255,12 @@ public final class SetupControllerImpl implements SetupController {
     ListenableFuture<Void> finishSetup() {
         mCallbacks.remove(mReportStateCallbacks);
         if (mCurrentSetupState == SetupStatus.SETUP_FINISHED) {
-            return Futures.transformAsync(mStateController.setNextStateForEvent(
-                            DeviceEvent.SETUP_COMPLETE),
-                    empty -> Futures.transform(mPolicyController.launchActivityInLockedMode(),
-                            isLaunched -> {
-                                if (!isLaunched) {
-                                    throw new IllegalStateException(
-                                            "Launching kiosk setup activity failed!");
-                                }
-                                return null;
-                            }, MoreExecutors.directExecutor()), MoreExecutors.directExecutor());
+            return mStateController.setNextStateForEvent(DeviceEvent.SETUP_COMPLETE);
         } else if (mCurrentSetupState == SetupStatus.SETUP_FAILED) {
             return Futures.transform(
                     SetupParametersClient.getInstance().isProvisionMandatory(),
                     isMandatory -> {
-                        if (isMandatory) mPolicyController.wipeData();
+                        if (isMandatory) mPolicyController.wipeDevice();
                         return null;
                     }, MoreExecutors.directExecutor());
         } else {

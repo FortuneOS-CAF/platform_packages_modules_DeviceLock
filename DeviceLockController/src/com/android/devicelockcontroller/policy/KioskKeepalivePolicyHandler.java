@@ -43,25 +43,25 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
-/** Handles kiosk app role. */
-public final class RolePolicyHandler implements PolicyHandler {
-    private static final String TAG = "RolePolicyHandler";
+/** Handles kiosk app keepalive. */
+public final class KioskKeepalivePolicyHandler implements PolicyHandler {
+    private static final String TAG = "KioskKeepalivePolicyHandler";
 
     private final Context mContext;
     private final SystemDeviceLockManager mSystemDeviceLockManager;
     private final SetupParametersClientInterface mSetupParametersClient;
 
-    RolePolicyHandler(Context context, SystemDeviceLockManager systemDeviceLockManager) {
+    KioskKeepalivePolicyHandler(Context context, SystemDeviceLockManager systemDeviceLockManager) {
         mContext = context;
         mSystemDeviceLockManager = systemDeviceLockManager;
         mSetupParametersClient = SetupParametersClient.getInstance();
     }
 
     private ListenableFuture<@ResultType Integer>
-            getAddFinancedDeviceLockKioskRoleFuture(String packageName) {
+            getEnableKioskKeepaliveFuture(String packageName) {
         return CallbackToFutureAdapter.getFuture(
                 completer -> {
-                    mSystemDeviceLockManager.addFinancedDeviceKioskRole(packageName,
+                    mSystemDeviceLockManager.enableKioskKeepalive(packageName,
                             mContext.getMainExecutor(),
                             new OutcomeReceiver<>() {
                                 @Override
@@ -71,31 +71,31 @@ public final class RolePolicyHandler implements PolicyHandler {
 
                                 @Override
                                 public void onError(Exception ex) {
-                                    LogUtil.e(TAG, "Failed to add financed device kiosk role",
+                                    LogUtil.e(TAG, "Failed to enable kiosk keepalive",
                                             ex);
-                                    completer.set(FAILURE);
+                                    // Return SUCCESS since the keepalive service is optional
+                                    completer.set(SUCCESS);
                                 }
                             });
                     // Used only for debugging.
-                    return "getAddFinancedDeviceLockKioskRoleFuture";
+                    return "getEnableKioskKeepaliveFuture";
                 });
     }
 
     private ListenableFuture<@ResultType Integer>
-            getAddFinancedDeviceLockKioskRoleFuture() {
+            getEnableKioskKeepaliveFuture() {
         return Futures.transformAsync(mSetupParametersClient.getKioskPackage(),
                 kioskPackageName -> kioskPackageName == null
                         ? Futures.immediateFuture(FAILURE)
-                        : getAddFinancedDeviceLockKioskRoleFuture(kioskPackageName),
+                        : getEnableKioskKeepaliveFuture(kioskPackageName),
                 MoreExecutors.directExecutor());
     }
 
     private ListenableFuture<@ResultType Integer>
-            getRemoveFinancedDeviceLockKioskRoleFuture(String packageName) {
+            getDisableKioskKeepaliveFuture() {
         return CallbackToFutureAdapter.getFuture(
                 completer -> {
-                    mSystemDeviceLockManager.removeFinancedDeviceKioskRole(packageName,
-                            mContext.getMainExecutor(),
+                    mSystemDeviceLockManager.disableKioskKeepalive(mContext.getMainExecutor(),
                             new OutcomeReceiver<>() {
                                 @Override
                                 public void onResult(Void result) {
@@ -104,42 +104,34 @@ public final class RolePolicyHandler implements PolicyHandler {
 
                                 @Override
                                 public void onError(Exception ex) {
-                                    LogUtil.e(TAG, "Failed to remove financed device kiosk role",
+                                    LogUtil.e(TAG, "Failed to disable kiosk keepalive",
                                             ex);
-                                    completer.set(FAILURE);
+                                    // Return SUCCESS since the keepalive service is optional
+                                    completer.set(SUCCESS);
                                 }
                             });
                     // Used only for debugging.
-                    return "getRemoveFinancedDeviceLockKioskRoleFuture";
+                    return "getDisableKioskKeepaliveFuture";
                 });
-    }
-
-    private ListenableFuture<@ResultType Integer>
-            getRemoveFinancedDeviceLockKioskRoleFuture() {
-        return Futures.transformAsync(mSetupParametersClient.getKioskPackage(),
-                kioskPackageName -> kioskPackageName == null
-                        ? Futures.immediateFuture(FAILURE)
-                        : getRemoveFinancedDeviceLockKioskRoleFuture(kioskPackageName),
-                MoreExecutors.directExecutor());
     }
 
     @Override
     public ListenableFuture<@ResultType Integer> setPolicyForState(@DeviceState int state) {
         switch (state) {
             case UNPROVISIONED:
-            case KIOSK_SETUP:
-            case UNLOCKED:
-            case LOCKED:
             case SETUP_IN_PROGRESS:
-            case SETUP_PAUSED:
+            case SETUP_SUCCEEDED:
             case SETUP_FAILED:
+            case SETUP_PAUSED:
             case PSEUDO_LOCKED:
             case PSEUDO_UNLOCKED:
                 return Futures.immediateFuture(SUCCESS);
-            case SETUP_SUCCEEDED:
-                return getAddFinancedDeviceLockKioskRoleFuture();
+            case LOCKED:
+            case KIOSK_SETUP:
+                return getEnableKioskKeepaliveFuture();
+            case UNLOCKED:
             case CLEARED:
-                return getRemoveFinancedDeviceLockKioskRoleFuture();
+                return getDisableKioskKeepaliveFuture();
             default:
                 return Futures.immediateFailedFuture(
                         new IllegalStateException(String.valueOf(state)));
