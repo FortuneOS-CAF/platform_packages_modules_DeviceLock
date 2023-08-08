@@ -45,6 +45,7 @@ public abstract class DeviceCheckInClient {
     protected static String sHostName = "";
     protected static int sPortNumber = 0;
     protected static Pair<String, String> sApiKey = new Pair<>("", "");
+    private static volatile boolean sUseDebugClient;
 
     /**
      * Get a instance of DeviceCheckInClient object.
@@ -55,28 +56,35 @@ public abstract class DeviceCheckInClient {
             int portNumber,
             Pair<String, String> apiKey,
             @Nullable String registeredId) {
-        if (sClient == null) {
-            synchronized (DeviceCheckInClient.class) {
-                try {
-                    // In case the initialization is already done by other thread use existing
-                    // instance.
-                    if (sClient != null) {
-                        return sClient;
-                    }
+        boolean useDebugClient = SystemProperties.getBoolean("debug.devicelock.checkin", false);
+        synchronized (DeviceCheckInClient.class) {
+            try {
+                boolean createRequired =
+                        (sClient == null || sUseDebugClient != useDebugClient)
+                                ? true
+                                : (registeredId != null && !registeredId.equals(sRegisteredId))
+                                        ? true
+                                        : (hostName != null && !hostName.equals(sHostName))
+                                                ? true
+                                                : (apiKey != null && !apiKey.equals(sApiKey))
+                                                        ? true
+                                                        : false;
+
+                if (createRequired) {
                     sHostName = hostName;
                     sPortNumber = portNumber;
                     sRegisteredId = registeredId;
                     sApiKey = apiKey;
-                    if (Build.isDebuggable() && SystemProperties.getBoolean(
-                            "debug.devicelock.checkin", true)) {
+                    sUseDebugClient = useDebugClient;
+                    if (Build.isDebuggable() && sUseDebugClient) {
                         className = DEVICE_CHECK_IN_CLIENT_DEBUG_CLASS_NAME;
                     }
                     LogUtil.d(TAG, "Creating instance for " + className);
                     Class<?> clazz = Class.forName(className);
                     sClient = (DeviceCheckInClient) clazz.getDeclaredConstructor().newInstance();
-                } catch (Exception e) {
-                    throw new RuntimeException("Failed to get DeviceCheckInClient instance", e);
                 }
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to get DeviceCheckInClient instance", e);
             }
         }
         return sClient;
@@ -106,6 +114,7 @@ public abstract class DeviceCheckInClient {
      *                    DeviceLock program. Could be null if unavailable.
      * @return A class that encapsulate the response from the backend server.
      */
+    @WorkerThread
     public abstract IsDeviceInApprovedCountryGrpcResponse isDeviceInApprovedCountry(
             @Nullable String carrierInfo);
 

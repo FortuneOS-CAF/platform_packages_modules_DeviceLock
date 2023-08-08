@@ -22,8 +22,7 @@ package com.android.devicelockcontroller.storage;
  */
 interface IGlobalParametersService {
     void clear();
-    List<String> getLockTaskAllowlist();
-    void setLockTaskAllowlist(in List<String> allowlist);
+    void dump();
     boolean needCheckIn();
     void setNeedCheckIn(boolean needCheckIn);
     String getRegisteredDeviceId();
@@ -32,8 +31,6 @@ interface IGlobalParametersService {
     void setProvisionForced(boolean isForced);
     String getEnrollmentToken();
     void setEnrollmentToken(String token);
-    String getKioskSignature();
-    void setKioskSignature(String signature);
     int getLastReceivedProvisionState();
     void setLastReceivedProvisionState(int provisionState);
 }

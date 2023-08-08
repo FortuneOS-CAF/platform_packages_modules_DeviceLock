@@ -22,6 +22,7 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -32,19 +33,12 @@ import androidx.lifecycle.ViewModelProvider;
 
 import com.android.devicelockcontroller.R;
 import com.android.devicelockcontroller.activities.util.UrlUtils;
+import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
 
 /**
  * A screen which always displays a progress bar.
  */
 public final class ProgressFragment extends Fragment {
-
-    /** The Bundle key for the resource id of the icon. */
-    private static final String KEY_ICON_ID = "key_icon_id";
-
-    /** The Bundle key for the resource id of the header text. */
-    private static final String KEY_HEADER_TEXT_ID = "key_header_text_id";
-
-    private static final String KEY_SUBHEADER_TEXT_ID = "key_subheader_text_id";
 
     @Nullable
     @Override
@@ -96,28 +90,22 @@ public final class ProgressFragment extends Fragment {
                     }
                     if (provisioningProgress.mBottomViewVisible) {
                         bottomView.setVisibility(View.VISIBLE);
+                        Button retryButton = bottomView.findViewById(R.id.button_retry);
+                        checkNotNull(retryButton);
+                        PolicyObjectsInterface policyObjects =
+                                (PolicyObjectsInterface) getActivity().getApplicationContext();
+
+                        retryButton.setOnClickListener(
+                                view -> provisioningProgressViewModel.retrySetupFlow(
+                                        policyObjects.getSetupController(),
+                                        policyObjects.getStateController(),
+                                        getActivity()));
                     } else {
                         bottomView.setVisibility(View.GONE);
                     }
                 });
 
         return v;
-    }
-
-    static ProgressFragment create(int iconId, int headerTextId, int subheaderTextId) {
-        ProgressFragment progressFragment = new ProgressFragment();
-        Bundle bundle = new Bundle();
-        if (iconId != 0) {
-            bundle.putInt(KEY_ICON_ID, iconId);
-        }
-        if (headerTextId != 0) {
-            bundle.putInt(KEY_HEADER_TEXT_ID, headerTextId);
-        }
-        if (subheaderTextId != 0) {
-            bundle.putInt(KEY_SUBHEADER_TEXT_ID, subheaderTextId);
-        }
-        progressFragment.setArguments(bundle);
-        return progressFragment;
     }
 
 }

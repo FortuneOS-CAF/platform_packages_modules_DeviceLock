@@ -19,14 +19,13 @@ package com.android.devicelockcontroller.storage;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
-import android.util.ArraySet;
 
 import androidx.annotation.Nullable;
 
 import com.android.devicelockcontroller.common.DeviceLockConstants.DeviceProvisionState;
+import com.android.devicelockcontroller.util.LogUtil;
 
-import java.util.ArrayList;
-import java.util.Set;
+import java.util.Locale;
 
 /**
  * Stores global parameters.
@@ -37,13 +36,12 @@ import java.util.Set;
  */
 final class GlobalParameters {
     private static final String FILENAME = "global-params";
-    private static final String KEY_KIOSK_SIGNING_CERT = "kiosk_signing_cert";
-    private static final String KEY_LOCK_TASK_ALLOWLIST = "lock_task_allowlist";
     private static final String KEY_NEED_CHECK_IN = "need_check_in";
     private static final String KEY_REGISTERED_DEVICE_ID = "registered_device_id";
     private static final String KEY_FORCED_PROVISION = "forced_provision";
     private static final String KEY_ENROLLMENT_TOKEN = "enrollment_token";
     private static final String KEY_LAST_RECEIVED_PROVISION_STATE = "last-received-provision-state";
+    public static final String TAG = "GlobalParameters";
 
 
     private GlobalParameters() {
@@ -53,60 +51,6 @@ final class GlobalParameters {
         final Context deviceContext = context.createDeviceProtectedStorageContext();
 
         return deviceContext.getSharedPreferences(FILENAME, Context.MODE_PRIVATE);
-    }
-
-    /**
-     * Get the kiosk app signature.
-     *
-     * @param context Context used to get the shared preferences.
-     * @return the kiosk app signature.
-     */
-    @Nullable
-    static String getKioskSignature(Context context) {
-        return getSharedPreferences(context).getString(KEY_KIOSK_SIGNING_CERT, null);
-    }
-
-    /**
-     * Sets the kiosk app signature.
-     *
-     * @param context   Context used to get the shared preferences.
-     * @param signature Kiosk app signature.
-     */
-    static void setKioskSignature(Context context, String signature) {
-        getSharedPreferences(context).edit().putString(KEY_KIOSK_SIGNING_CERT, signature).apply();
-    }
-
-    /**
-     * Gets the list of packages allowlisted in lock task mode.
-     *
-     * @param context Context used to get the shared preferences.
-     * @return List of packages that are allowed in lock task mode.
-     */
-    static ArrayList<String> getLockTaskAllowlist(Context context) {
-        final ArrayList<String> allowlistArray = new ArrayList<>();
-        SharedPreferences sharedPreferences = getSharedPreferences(context);
-        final Set<String> allowlist =
-                sharedPreferences.getStringSet(KEY_LOCK_TASK_ALLOWLIST, /* defValue= */ null);
-        if (allowlist != null) {
-            allowlistArray.addAll(allowlist);
-        }
-
-        return allowlistArray;
-    }
-
-    /**
-     * Sets the list of packages allowlisted in lock task mode.
-     *
-     * @param context   Context used to get the shared preferences.
-     * @param allowlist List of packages that are allowed in lock task mode.
-     */
-    static void setLockTaskAllowlist(Context context, ArrayList<String> allowlist) {
-        final Set<String> allowlistSet = new ArraySet<>(allowlist);
-
-        getSharedPreferences(context)
-                .edit()
-                .putStringSet(KEY_LOCK_TASK_ALLOWLIST, allowlistSet)
-                .apply();
     }
 
     /**
@@ -224,5 +168,21 @@ final class GlobalParameters {
             throw new SecurityException("Clear is not allowed in non-debuggable build!");
         }
         getSharedPreferences(context).edit().clear().commit();
+    }
+
+    static void dump(Context context) {
+        LogUtil.d(TAG, String.format(Locale.US,
+                "Dumping GlobalParameters ...\n"
+                        + "%s: %s\n"    // need_check_in:
+                        + "%s: %s\n"    // registered_device_id:
+                        + "%s: %s\n"    // forced_provision:
+                        + "%s: %s\n"    // enrollment_token:
+                        + "%s: %s\n",   // last-received-provision-state:
+                KEY_NEED_CHECK_IN, needCheckIn(context),
+                KEY_REGISTERED_DEVICE_ID, getRegisteredDeviceId(context),
+                KEY_FORCED_PROVISION, isProvisionForced(context),
+                KEY_ENROLLMENT_TOKEN, getEnrollmentToken(context),
+                KEY_LAST_RECEIVED_PROVISION_STATE, getLastReceivedProvisionState(context)
+        ));
     }
 }

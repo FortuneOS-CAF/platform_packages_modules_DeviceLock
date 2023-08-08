@@ -34,7 +34,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 
-import java.util.List;
 import java.util.concurrent.Executors;
 
 /**
@@ -105,24 +104,12 @@ public final class GlobalParametersClient extends DlcClient {
     }
 
     /**
-     * Gets the list of packages allowlisted in lock task mode.
-     *
-     * @return List of packages that are allowed in lock task mode.
+     * Dump current values of SetupParameters to logcat.
      */
     @SuppressWarnings("GuardedBy") // mLock already held in "call" (error prone).
-    public ListenableFuture<List<String>> getLockTaskAllowlist() {
-        return call(() -> asInterface(getService()).getLockTaskAllowlist());
-    }
-
-    /**
-     * Sets the list of packages allowlisted in lock task mode.
-     *
-     * @param allowlist List of packages that are allowed in lock task mode.
-     */
-    @SuppressWarnings("GuardedBy") // mLock already held in "call" (error prone).
-    public ListenableFuture<Void> setLockTaskAllowlist(List<String> allowlist) {
+    public ListenableFuture<Void> dump() {
         return call(() -> {
-            asInterface(getService()).setLockTaskAllowlist(allowlist);
+            asInterface(getService()).dump();
             return null;
         });
     }
@@ -218,30 +205,6 @@ public final class GlobalParametersClient extends DlcClient {
     public ListenableFuture<Void> setEnrollmentToken(String token) {
         return call(() -> {
             asInterface(getService()).setEnrollmentToken(token);
-            return null;
-        });
-    }
-
-    /**
-     * Get the kiosk app signature.
-     *
-     * @return the kiosk app signature.
-     */
-    @Nullable
-    @SuppressWarnings("GuardedBy") // mLock already held in "call" (error prone).
-    public ListenableFuture<String> getKioskSignature() {
-        return call(() -> asInterface(getService()).getKioskSignature());
-    }
-
-    /**
-     * Sets the kiosk app signature.
-     *
-     * @param signature Kiosk app signature.
-     */
-    @SuppressWarnings("GuardedBy") // mLock already held in "call" (error prone).
-    public ListenableFuture<Void> setKioskSignature(String signature) {
-        return call(() -> {
-            asInterface(getService()).setKioskSignature(signature);
             return null;
         });
     }

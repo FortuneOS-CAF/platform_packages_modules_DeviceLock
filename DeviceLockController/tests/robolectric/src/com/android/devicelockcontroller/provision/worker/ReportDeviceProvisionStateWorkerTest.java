@@ -22,7 +22,7 @@ import static com.android.devicelockcontroller.common.DeviceLockConstants.Device
 import static com.android.devicelockcontroller.common.DeviceLockConstants.DeviceProvisionState.PROVISION_STATE_RETRY;
 import static com.android.devicelockcontroller.common.DeviceLockConstants.DeviceProvisionState.PROVISION_STATE_SUCCESS;
 import static com.android.devicelockcontroller.common.DeviceLockConstants.DeviceProvisionState.PROVISION_STATE_UNSPECIFIED;
-import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceEvent.PROVISIONING_SUCCESS;
+import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceEvent.PROVISION_READY;
 import static com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionStateWorker.UNEXPECTED_PROVISION_STATE_ERROR_MESSAGE;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -38,15 +38,19 @@ import android.os.Looper;
 
 import androidx.annotation.NonNull;
 import androidx.test.core.app.ApplicationProvider;
+import androidx.work.Configuration;
 import androidx.work.ListenableWorker;
 import androidx.work.ListenableWorker.Result;
 import androidx.work.WorkerFactory;
 import androidx.work.WorkerParameters;
+import androidx.work.testing.SynchronousExecutor;
 import androidx.work.testing.TestListenableWorkerBuilder;
+import androidx.work.testing.WorkManagerTestInitHelper;
 
 import com.android.devicelockcontroller.TestDeviceLockControllerApplication;
 import com.android.devicelockcontroller.policy.DevicePolicyController;
 import com.android.devicelockcontroller.policy.DeviceStateController;
+import com.android.devicelockcontroller.policy.DeviceStateController.DeviceState;
 import com.android.devicelockcontroller.provision.grpc.DeviceCheckInClient;
 import com.android.devicelockcontroller.provision.grpc.ReportDeviceProvisionStateGrpcResponse;
 
@@ -80,6 +84,12 @@ public final class ReportDeviceProvisionStateWorkerTest {
     @Before
     public void setUp() throws Exception {
         mTestApp = ApplicationProvider.getApplicationContext();
+        WorkManagerTestInitHelper.initializeTestWorkManager(mTestApp,
+                new Configuration.Builder()
+                        .setMinimumLoggingLevel(android.util.Log.DEBUG)
+                        .setExecutor(new SynchronousExecutor())
+                        .build());
+
         when(mClient.reportDeviceProvisionState(anyInt(), anyInt(), anyBoolean())).thenReturn(
                 mResponse);
         mWorker = TestListenableWorkerBuilder.from(
@@ -150,13 +160,13 @@ public final class ReportDeviceProvisionStateWorkerTest {
         when(mResponse.getNextClientProvisionState()).thenReturn(PROVISION_STATE_RETRY);
         DevicePolicyController devicePolicyController = mTestApp.getPolicyController();
         DeviceStateController deviceStateController = mTestApp.getStateController();
-        when(deviceStateController.setNextStateForEvent(PROVISIONING_SUCCESS)).thenReturn(
-                Futures.immediateVoidFuture());
+        when(deviceStateController.setNextStateForEvent(PROVISION_READY)).thenReturn(
+                Futures.immediateFuture(DeviceState.PROVISION_SUCCEEDED));
 
         assertThat(Futures.getUnchecked(mWorker.startWork())).isEqualTo(Result.success());
 
         Shadows.shadowOf(Looper.getMainLooper()).idle();
-        verify(deviceStateController).setNextStateForEvent(eq(PROVISIONING_SUCCESS));
+        verify(deviceStateController).setNextStateForEvent(eq(PROVISION_READY));
     }
 
     @Test

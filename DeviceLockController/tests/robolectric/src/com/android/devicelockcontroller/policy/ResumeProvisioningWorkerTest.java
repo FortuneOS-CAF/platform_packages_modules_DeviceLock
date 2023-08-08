@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-package com.android.devicelockcontroller.provision.worker;
+package com.android.devicelockcontroller.policy;
+
+import static com.google.common.truth.Truth.assertThat;
+
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.content.Context;
 
@@ -29,13 +36,11 @@ import androidx.work.WorkerParameters;
 import androidx.work.testing.TestListenableWorkerBuilder;
 
 import com.android.devicelockcontroller.TestDeviceLockControllerApplication;
-import com.android.devicelockcontroller.policy.DeviceStateController;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceEvent;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceState;
 
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-
 import com.google.common.util.concurrent.testing.TestingExecutors;
 
 import org.jetbrains.annotations.NotNull;
@@ -46,14 +51,6 @@ import org.mockito.ArgumentCaptor;
 import org.robolectric.RobolectricTestRunner;
 
 import java.time.Duration;
-
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import static com.google.common.truth.Truth.assertThat;
 
 @RunWith(RobolectricTestRunner.class)
 public final class ResumeProvisioningWorkerTest {
@@ -83,8 +80,8 @@ public final class ResumeProvisioningWorkerTest {
     @Test
     public void scheduleResumeProvisioningWorker_shouldScheduleTheWorker() {
         WorkManager workManager = mock(WorkManager.class);
-        Duration delay = Duration.ofHours(PauseProvisioningWorker.PROVISION_PAUSED_HOUR);
-        ResumeProvisioningWorker.scheduleResumeProvisioningWorker(workManager, delay);
+        Duration delay = Duration.ofHours(ResumeProvisioningWorker.PROVISION_PAUSED_HOUR);
+        ResumeProvisioningWorker.scheduleResumeProvisioningWorker(workManager);
 
         ArgumentCaptor<OneTimeWorkRequest> workRequestArgumentCaptor = ArgumentCaptor.forClass(
                 OneTimeWorkRequest.class);
@@ -98,27 +95,23 @@ public final class ResumeProvisioningWorkerTest {
 
     @Test
     public void startWork_shouldDispatchResumeProvisionEvent() {
-        when(mDeviceStateController.setNextStateForEvent(anyInt()))
-                .thenReturn(Futures.immediateVoidFuture());
-        when(mDeviceStateController.getState()).thenReturn(DeviceState.SETUP_IN_PROGRESS);
+        when(mDeviceStateController.setNextStateForEvent(eq(DeviceEvent.PROVISION_RESUME)))
+                .thenReturn(Futures.immediateFuture(DeviceState.PROVISION_IN_PROGRESS));
 
         ListenableFuture<Result> result = mWorker.startWork();
 
         assertThat(Futures.getUnchecked(result)).isEqualTo(Result.success());
-        verify(mDeviceStateController).getState();
-        verify(mDeviceStateController).setNextStateForEvent(eq(DeviceEvent.SETUP_RESUME));
+        verify(mDeviceStateController).setNextStateForEvent(eq(DeviceEvent.PROVISION_RESUME));
     }
 
     @Test
     public void startWork_shouldFail_whenDeviceStateDidNotTransitionToInProgress() {
-        when(mDeviceStateController.setNextStateForEvent(anyInt()))
-                .thenReturn(Futures.immediateVoidFuture());
-        when(mDeviceStateController.getState()).thenReturn(DeviceState.SETUP_FAILED);
+        when(mDeviceStateController.setNextStateForEvent(eq(DeviceEvent.PROVISION_RESUME)))
+                .thenReturn(Futures.immediateFuture(DeviceState.PROVISION_FAILED));
 
         ListenableFuture<Result> result = mWorker.startWork();
 
         assertThat(Futures.getUnchecked(result)).isEqualTo(Result.failure());
-        verify(mDeviceStateController).getState();
-        verify(mDeviceStateController).setNextStateForEvent(eq(DeviceEvent.SETUP_RESUME));
+        verify(mDeviceStateController).setNextStateForEvent(eq(DeviceEvent.PROVISION_RESUME));
     }
 }

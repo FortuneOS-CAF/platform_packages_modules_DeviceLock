@@ -18,12 +18,10 @@ package com.android.devicelockcontroller.policy;
 
 import static com.android.devicelockcontroller.common.DeviceLockConstants.ACTION_START_DEVICE_FINANCING_DEFERRED_PROVISIONING;
 import static com.android.devicelockcontroller.common.DeviceLockConstants.ACTION_START_DEVICE_FINANCING_PROVISIONING;
-import static com.android.devicelockcontroller.common.DeviceLockConstants.ACTION_START_DEVICE_FINANCING_SECONDARY_USER_PROVISIONING;
 import static com.android.devicelockcontroller.common.DeviceLockConstants.ACTION_START_DEVICE_SUBSIDY_DEFERRED_PROVISIONING;
 import static com.android.devicelockcontroller.common.DeviceLockConstants.ACTION_START_DEVICE_SUBSIDY_PROVISIONING;
 import static com.android.devicelockcontroller.policy.PolicyHandler.SUCCESS;
 
-import android.app.AppOpsManager;
 import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
 import android.content.Context;
@@ -97,8 +95,7 @@ public final class DevicePolicyControllerImpl
 
         mPolicyList.add(new UserRestrictionsPolicyHandler(dpm,
                 context.getSystemService(UserManager.class), Build.isDebuggable()));
-        mPolicyList.add(new AppOpsPolicyHandler(context, systemDeviceLockManager,
-                context.getSystemService(AppOpsManager.class)));
+        mPolicyList.add(new AppOpsPolicyHandler(context, systemDeviceLockManager));
         mPolicyList.add(new LockTaskModePolicyHandler(context, dpm, this));
         mPolicyList.add(new PackagePolicyHandler(context, dpm));
         mPolicyList.add(new RolePolicyHandler(context, systemDeviceLockManager));
@@ -167,15 +164,15 @@ public final class DevicePolicyControllerImpl
         @DeviceState int state = mStateController.getState();
 
         switch (state) {
-            case DeviceState.SETUP_IN_PROGRESS:
-            case DeviceState.SETUP_SUCCEEDED:
+            case DeviceState.PROVISION_IN_PROGRESS:
+            case DeviceState.PROVISION_SUCCEEDED:
                 return getLandingActivityIntent();
-            case DeviceState.KIOSK_SETUP:
+            case DeviceState.KIOSK_PROVISIONED:
                 return getKioskSetupActivityIntent();
             case DeviceState.LOCKED:
                 return getLockScreenActivityIntent();
-            case DeviceState.SETUP_FAILED:
-            case DeviceState.SETUP_PAUSED:
+            case DeviceState.PROVISION_FAILED:
+            case DeviceState.PROVISION_PAUSED:
             case DeviceState.UNLOCKED:
             case DeviceState.CLEARED:
             case DeviceState.UNPROVISIONED:
@@ -200,10 +197,10 @@ public final class DevicePolicyControllerImpl
                     boolean isMandatory = Futures.getDone(isMandatoryTask);
                     switch (Futures.getDone(provisioningTypeTask)) {
                         case ProvisioningType.TYPE_FINANCED:
-                            if (!mContext.getUser().isSystem()) {
-                                return resultIntent.setAction(
-                                        ACTION_START_DEVICE_FINANCING_SECONDARY_USER_PROVISIONING);
-                            }
+                            // TODO(b/288923554) this used to return an intent with action
+                            // ACTION_START_DEVICE_FINANCING_SECONDARY_USER_PROVISIONING
+                            // for secondary users. Rework once a decision has been made about
+                            // what to show to users.
                             return resultIntent.setAction(
                                     isMandatory ? ACTION_START_DEVICE_FINANCING_PROVISIONING
                                             : ACTION_START_DEVICE_FINANCING_DEFERRED_PROVISIONING);
@@ -259,15 +256,27 @@ public final class DevicePolicyControllerImpl
     }
 
     private ListenableFuture<Intent> getKioskSetupActivityIntent() {
-        return Futures.transform(SetupParametersClient.getInstance().getKioskSetupActivity(),
-                setupActivity -> {
-                    if (setupActivity == null) {
-                        LogUtil.e(TAG, "Failed to get setup Activity");
-                        return null;
-                    }
+        ListenableFuture<String> kioskPackageTask =
+                SetupParametersClient.getInstance().getKioskPackage();
+        ListenableFuture<String> setupActivityTask =
+                SetupParametersClient.getInstance().getKioskSetupActivity();
+        return Futures.whenAllSucceed(kioskPackageTask, setupActivityTask)
+                .call(
+                        () -> {
+                            String kioskPackage = Futures.getDone(kioskPackageTask);
+                            if (kioskPackage == null) {
+                                LogUtil.e(TAG, "Missing kiosk package parameter");
+                                return null;
+                            }
 
-                    return new Intent().setComponent(
-                            ComponentName.unflattenFromString(setupActivity));
-                }, mContext.getMainExecutor());
+                            String setupActivity = Futures.getDone(setupActivityTask);
+                            if (setupActivity == null) {
+                                LogUtil.e(TAG, "Failed to get setup Activity");
+                                return null;
+                            }
+                            return new Intent()
+                                    .setComponent(new ComponentName(kioskPackage, setupActivity));
+                        },
+                        MoreExecutors.directExecutor());
     }
 }

@@ -126,19 +126,22 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
                 tryCheckIn(appContext);
                 break;
             case Commands.DUMP:
-                dumpStorage();
+                dumpStorage(context);
                 break;
             default:
                 throw new IllegalArgumentException("Unsupported command: " + command);
         }
     }
 
-    private static void dumpStorage() {
-        // TODO(b/286576135): add dumping for GlobalParameters and UserParameters
-        Futures.addCallback(SetupParametersClient.getInstance().dump(),
+    private static void dumpStorage(Context context) {
+        Futures.addCallback(
+                Futures.transformAsync(SetupParametersClient.getInstance().dump(),
+                        unused -> GlobalParametersClient.getInstance().dump(),
+                        MoreExecutors.directExecutor()),
                 new FutureCallback<>() {
                     @Override
                     public void onSuccess(Void result) {
+                        UserParameters.dump(context);
                         LogUtil.i(TAG, "Successfully dumped storage");
                     }
 
@@ -198,12 +201,20 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         Objects.requireNonNull(alarmManager).cancel(
                 ReportDeviceProvisionStateWorker.getResetDevicePendingIntent(context));
 
+        DeviceStateController stateController =
+                ((PolicyObjectsInterface) context.getApplicationContext()).getStateController();
         ListenableFuture<Void> resetFuture = Futures.transformAsync(
                 // First clear restrictions
-                forceSetState(context, CLEARED),
+                stateController.isUnrestrictedState()
+                        ? Futures.immediateVoidFuture()
+                        : Futures.catching(forceSetState(context, CLEARED), RuntimeException.class,
+                                e -> {
+                                    LogUtil.w(TAG, "Failure encountered when force clear.", e);
+                                    return null;
+                                }, MoreExecutors.directExecutor()),
                 // Then clear storage, this will reset state to the default state which is
                 // UNPROVISIONED.
-                (Void unused) -> clearStorage(context),
+                unused -> clearStorage(context),
                 MoreExecutors.directExecutor());
         Futures.addCallback(
                 resetFuture,
