@@ -23,9 +23,10 @@ import android.os.UserManager;
 
 import androidx.annotation.VisibleForTesting;
 
+import com.android.devicelockcontroller.AbstractDeviceLockControllerScheduler;
+import com.android.devicelockcontroller.DeviceLockControllerScheduler;
 import com.android.devicelockcontroller.policy.DeviceStateController;
 import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
-import com.android.devicelockcontroller.provision.worker.DeviceCheckInHelper;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.util.LogUtil;
 
@@ -36,23 +37,24 @@ import com.google.common.util.concurrent.MoreExecutors;
 /**
  * Boot completed broadcast receiver to enqueue the check-in work for provision when device boots
  * for the first time.
- * Note that this boot completed receiver differs with {@link LockTaskBootCompletedReceiver} in the
+ * Note that this boot completed receiver differs with {@link BootCompletedReceiver} in the
  * way that it only runs for system user.
  */
-public final class CheckInBootCompletedReceiver extends BroadcastReceiver {
+public final class SingleUserBootCompletedReceiver extends BroadcastReceiver {
 
-    private static final String TAG = "CheckInBootCompletedReceiver";
+    private static final String TAG = "SingleUserBootCompletedReceiver";
+    private AbstractDeviceLockControllerScheduler mScheduler;
 
     @VisibleForTesting
     static void checkInIfNeeded(DeviceStateController stateController,
-            DeviceCheckInHelper checkInHelper) {
+            AbstractDeviceLockControllerScheduler scheduler) {
         if (stateController.isCheckInNeeded()) {
             Futures.addCallback(GlobalParametersClient.getInstance().needCheckIn(),
                     new FutureCallback<>() {
                         @Override
                         public void onSuccess(Boolean needCheckIn) {
                             if (needCheckIn) {
-                                checkInHelper.enqueueDeviceCheckInWork(/* isExpedited= */ false);
+                                scheduler.scheduleInitialCheckInWork();
                             }
                         }
 
@@ -62,6 +64,14 @@ public final class CheckInBootCompletedReceiver extends BroadcastReceiver {
                         }
                     }, MoreExecutors.directExecutor());
         }
+    }
+
+    public SingleUserBootCompletedReceiver() {
+
+    }
+
+    SingleUserBootCompletedReceiver(AbstractDeviceLockControllerScheduler scheduler) {
+        mScheduler = scheduler;
     }
 
     @Override
@@ -77,8 +87,10 @@ public final class CheckInBootCompletedReceiver extends BroadcastReceiver {
             return;
         }
 
+        if (mScheduler == null) mScheduler = new DeviceLockControllerScheduler(context);
         checkInIfNeeded(
                 ((PolicyObjectsInterface) context.getApplicationContext()).getStateController(),
-                new DeviceCheckInHelper(context));
+                mScheduler);
+        mScheduler.rescheduleIfNeeded();
     }
 }

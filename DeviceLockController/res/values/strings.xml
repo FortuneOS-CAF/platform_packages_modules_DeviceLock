@@ -107,7 +107,7 @@
     <!-- Screen header text explaining that the user can now enroll this device into device financing program. [CHAR_LIMIT=40] -->
     <string name="enroll_your_device_header">Enroll your device</string>
     <!-- Screen subheader text explaining that the user can now enroll this device into device provider's device financing program. [CHAR_LIMIT=80] -->
-    <string name="enroll_your_device_financing_subheader">You can now enroll your device in <xliff:g id="provider name">%1$s</xliff:g>\'s financing program</string>
+    <string name="enroll_your_device_financing_subheader">You can now enroll your device in <xliff:g id="provider name">%1$s</xliff:g>\'s finance program</string>
     <!-- Screen subheader text explaining that the user can now enroll this device into device provider's device subsidy program. [CHAR_LIMIT=80]-->
     <string name="enroll_your_device_subsidy_subheader">You can now enroll your device in <xliff:g id="provider name">%1$s</xliff:g>\'s subsidy program</string>
     <!-- Screen header text explaining that the user is on a device subsidy program. [CHAR_LIMIT=40] -->
@@ -234,9 +234,6 @@
     <string name="device_reset_timer_notification_title">Device will reset in <xliff:g id="timer">%s</xliff:g></string>
     <!-- Content text of the notification that device will be reset. [CHAR LIMIT=NONE] -->
     <string name="device_reset_notification_content">All device data will be deleted. For help enrolling your device, contact <xliff:g id="provider name">%1$s</xliff:g></string>
-    <!-- TODO(b/279608060): Review this message with akintola@ -->
-    <!-- Toast message explaining why the user needs to grant permission to send notification. [CHAR LIMIT=NONE] -->
-    <string name="toast_message_grant_notification_permission">Please allow notification from DeviceLock to continue deferring the enrollment of the device.</string>
     <!-- Title text of the provisioning failed screen, this tells the user provisioning of their device failed. [CHAR LIMIT=60] -->
     <string name="provisioning_failed">Financing provisioning has failed</string>
     <!-- Subheader of the provisioning failed screen, this tells the user to click the link to contact their financier for help. [CHAR LIMIT=NONE] -->

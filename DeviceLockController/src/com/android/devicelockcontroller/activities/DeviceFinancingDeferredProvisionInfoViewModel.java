@@ -16,10 +16,14 @@
 
 package com.android.devicelockcontroller.activities;
 
+import android.annotation.NonNull;
+import android.app.Application;
+
 import com.android.devicelockcontroller.R;
 
 import java.util.ArrayList;
 import java.util.List;
+
 
 /**
  * This class provides resources and data used for the deferred provisioning flow of the device
@@ -41,16 +45,16 @@ public final class DeviceFinancingDeferredProvisionInfoViewModel extends Provisi
             R.string.download_kiosk_app, R.string.restrict_device_if_missing_payment,
     };
 
-    public DeviceFinancingDeferredProvisionInfoViewModel() {
-        super();
+    public DeviceFinancingDeferredProvisionInfoViewModel(@NonNull Application application) {
+        super(application);
 
-        mHeaderDrawableIdLiveData.setValue(HEADER_DRAWABLE_ID);
-        mHeaderTextIdLiveData.setValue(HEADER_TEXT_ID);
-        mSubheaderTextIdLiveData.setValue(SUBHEADER_TEXT_ID);
+        mHeaderDrawableId = HEADER_DRAWABLE_ID;
+        mHeaderTextId = HEADER_TEXT_ID;
+        mSubheaderTextId = SUBHEADER_TEXT_ID;
         List<ProvisionInfo> provisionInfoList = new ArrayList<>();
         for (int i = 0, size = DRAWABLE_IDS.length; i < size; ++i) {
             provisionInfoList.add(new ProvisionInfo(DRAWABLE_IDS[i], TEXT_IDS[i]));
         }
-        mProvisionInfoListLiveData.setValue(provisionInfoList);
+        mProvisionInfoList = provisionInfoList;
     }
 }

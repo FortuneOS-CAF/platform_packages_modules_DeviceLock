@@ -20,6 +20,7 @@ import static androidx.work.WorkInfo.State.CANCELLED;
 import static androidx.work.WorkInfo.State.FAILED;
 import static androidx.work.WorkInfo.State.SUCCEEDED;
 
+import static com.android.devicelockcontroller.DeviceLockControllerScheduler.RESET_DEVICE_IN_TWO_MINUTES;
 import static com.android.devicelockcontroller.common.DeviceLockConstants.EXTRA_KIOSK_PACKAGE;
 import static com.android.devicelockcontroller.common.DeviceLockConstants.SetupFailureReason.INSTALL_FAILED;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceEvent.PROVISION_PAUSE;
@@ -43,6 +44,7 @@ import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
 import com.android.devicelockcontroller.DeviceLockControllerApplication;
+import com.android.devicelockcontroller.DeviceLockControllerScheduler;
 import com.android.devicelockcontroller.common.DeviceLockConstants.SetupFailureReason;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceEvent;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceState;
@@ -52,11 +54,13 @@ import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
 import com.android.devicelockcontroller.util.LogUtil;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -114,7 +118,8 @@ public final class SetupControllerImpl implements SetupController {
                         if (newState == DeviceState.PROVISION_PAUSED) {
                             WorkManager workManager = WorkManager.getInstance(mContext);
                             PauseProvisioningWorker.reportProvisionPausedByUser(workManager);
-                            ResumeProvisioningWorker.scheduleResumeProvisioningWorker(workManager);
+                            new DeviceLockControllerScheduler(
+                                    mContext).scheduleResumeProvisionAlarm();
                         } else {
                             onFailure(new IllegalArgumentException(
                                     "New state should not be: " + newState));
@@ -215,18 +220,18 @@ public final class SetupControllerImpl implements SetupController {
                     final LiveData status =
                             workManager.getWorkInfoByIdLiveData(playInstallPackageTask.getId());
                     status.observe(owner, new Observer<WorkInfo>() {
-                                @Override
-                                public void onChanged(@Nullable WorkInfo workInfo) {
-                                    if (workInfo != null) {
-                                        final WorkInfo.State state = workInfo.getState();
-                                        if (state == SUCCEEDED) {
-                                            setupFlowTaskSuccessCallbackHandler();
-                                        } else if (state == FAILED || state == CANCELLED) {
-                                            setupFlowTaskFailureCallbackHandler(
-                                                    SetupFailureReason.INSTALL_FAILED);
-                                        }
-                                    }
+                        @Override
+                        public void onChanged(@Nullable WorkInfo workInfo) {
+                            if (workInfo != null) {
+                                final WorkInfo.State state = workInfo.getState();
+                                if (state == SUCCEEDED) {
+                                    setupFlowTaskSuccessCallbackHandler();
+                                } else if (state == FAILED || state == CANCELLED) {
+                                    setupFlowTaskFailureCallbackHandler(
+                                            SetupFailureReason.INSTALL_FAILED);
                                 }
+                            }
+                        }
                     });
 
                     return null;
@@ -254,7 +259,10 @@ public final class SetupControllerImpl implements SetupController {
             return Futures.transform(
                     SetupParametersClient.getInstance().isProvisionMandatory(),
                     isMandatory -> {
-                        if (isMandatory) mPolicyController.wipeDevice();
+                        if (isMandatory) {
+                            new DeviceLockControllerScheduler(mContext).scheduleResetDeviceAlarm(
+                                    Duration.ofMinutes(RESET_DEVICE_IN_TWO_MINUTES));
+                        }
                         return null;
                     }, MoreExecutors.directExecutor());
         } else {
@@ -289,16 +297,20 @@ public final class SetupControllerImpl implements SetupController {
                                 LogUtil.i(TAG, "Handling successful setup");
                                 mCurrentSetupState = SetupStatus.SETUP_FINISHED;
                                 synchronized (mCallbacks) {
-                                    for (int i = 0, cbSize = mCallbacks.size(); i < cbSize; i++) {
-                                        mCallbacks.get(i).setupCompleted();
+                                    ImmutableList<SetupUpdatesCallbacks> callbacks =
+                                            ImmutableList.copyOf(mCallbacks);
+                                    for (int i = 0, cbSize = callbacks.size(); i < cbSize; i++) {
+                                        callbacks.get(i).setupCompleted();
                                     }
                                 }
                             } else {
                                 LogUtil.i(TAG, "Handling failed setup");
                                 mCurrentSetupState = SetupStatus.SETUP_FAILED;
                                 synchronized (mCallbacks) {
-                                    for (int i = 0, cbSize = mCallbacks.size(); i < cbSize; i++) {
-                                        mCallbacks.get(i).setupFailed(failReason);
+                                    ImmutableList<SetupUpdatesCallbacks> callbacks =
+                                            ImmutableList.copyOf(mCallbacks);
+                                    for (int i = 0, cbSize = callbacks.size(); i < cbSize; i++) {
+                                        callbacks.get(i).setupFailed(failReason);
                                     }
                                 }
                             }

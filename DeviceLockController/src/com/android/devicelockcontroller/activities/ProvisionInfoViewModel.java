@@ -16,13 +16,17 @@
 
 package com.android.devicelockcontroller.activities;
 
+import android.annotation.NonNull;
+import android.app.Application;
 import android.text.TextUtils;
 import android.util.Pair;
 
+import androidx.lifecycle.AndroidViewModel;
 import androidx.lifecycle.MediatorLiveData;
 import androidx.lifecycle.MutableLiveData;
-import androidx.lifecycle.ViewModel;
 
+import com.android.devicelockcontroller.DeviceLockControllerApplication;
+import com.android.devicelockcontroller.policy.DeviceStateController;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
 import com.android.devicelockcontroller.util.LogUtil;
@@ -37,59 +41,46 @@ import java.util.List;
  * This class provides the resources and {@link ProvisionInfo} to render the
  * {@link ProvisionInfoFragment}.
  */
-public abstract class ProvisionInfoViewModel extends ViewModel {
+public abstract class ProvisionInfoViewModel extends AndroidViewModel {
 
     public static final String TAG = "ProvisionInfoViewModel";
-    public static final String PROVIDER_NAME_PLACEHOLDER = "";
-    public static final int TEXT_ID_PLACEHOLDER = -1;
-    final MutableLiveData<Integer> mHeaderDrawableIdLiveData;
-    final MutableLiveData<Integer> mHeaderTextIdLiveData;
-    final MutableLiveData<Integer> mSubheaderTextIdLiveData;
-    final MutableLiveData<List<ProvisionInfo>> mProvisionInfoListLiveData;
+    int mHeaderDrawableId;
+    int mHeaderTextId;
+    int mSubheaderTextId;
+    List<ProvisionInfo> mProvisionInfoList;
     final MutableLiveData<String> mProviderNameLiveData;
     final MutableLiveData<String> mTermsAndConditionsUrlLiveData;
     final MutableLiveData<Boolean> mIsProvisionForcedLiveData;
     final MediatorLiveData<Pair<Integer, String>> mHeaderTextLiveData;
     final MediatorLiveData<Pair<Integer, String>> mSubHeaderTextLiveData;
 
-    public ProvisionInfoViewModel() {
-        mProvisionInfoListLiveData = new MutableLiveData<>();
-        mHeaderDrawableIdLiveData = new MutableLiveData<>();
-        mHeaderTextIdLiveData = new MutableLiveData<>();
-        mSubheaderTextIdLiveData = new MutableLiveData<>();
+
+    final MutableLiveData<@DeviceStateController.DeviceState Integer> mDeviceState =
+            new MutableLiveData<>();
+
+    private final DeviceStateController.StateListener mStateListener = newState -> {
+        mDeviceState.postValue(newState);
+        LogUtil.d("ProvisionInfoViewModel", "deviceStateListener, newState: " + newState);
+        return Futures.immediateVoidFuture();
+    };
+
+    public ProvisionInfoViewModel(@NonNull Application application) {
+        super(application);
         mProviderNameLiveData = new MutableLiveData<>();
         mTermsAndConditionsUrlLiveData = new MutableLiveData<>();
         mIsProvisionForcedLiveData = new MutableLiveData<>();
         mHeaderTextLiveData = new MediatorLiveData<>();
-        mHeaderTextLiveData.addSource(mHeaderTextIdLiveData,
-                id -> {
-                    Pair<Integer, String> oldValue = mHeaderTextLiveData.getValue();
-                    mHeaderTextLiveData.setValue(oldValue == null
-                            ? new Pair<>(id, PROVIDER_NAME_PLACEHOLDER)
-                            : new Pair<>(id, oldValue.second));
-                });
         mHeaderTextLiveData.addSource(mProviderNameLiveData,
-                providerName -> {
-                    Pair<Integer, String> oldValue = mHeaderTextLiveData.getValue();
-                    mHeaderTextLiveData.setValue(oldValue == null
-                            ? new Pair<>(TEXT_ID_PLACEHOLDER, providerName)
-                            : new Pair<>(oldValue.first, providerName));
-                });
+                providerName -> mHeaderTextLiveData.setValue(
+                        new Pair<>(mHeaderTextId, providerName)));
         mSubHeaderTextLiveData = new MediatorLiveData<>();
-        mSubHeaderTextLiveData.addSource(mSubheaderTextIdLiveData,
-                id -> {
-                    Pair<Integer, String> oldValue = mSubHeaderTextLiveData.getValue();
-                    mSubHeaderTextLiveData.setValue(oldValue == null
-                            ? new Pair<>(id, PROVIDER_NAME_PLACEHOLDER)
-                            : new Pair<>(id, oldValue.second));
-                });
         mSubHeaderTextLiveData.addSource(mProviderNameLiveData,
-                providerName -> {
-                    Pair<Integer, String> oldValue = mSubHeaderTextLiveData.getValue();
-                    mSubHeaderTextLiveData.setValue(oldValue == null
-                            ? new Pair<>(TEXT_ID_PLACEHOLDER, providerName)
-                            : new Pair<>(oldValue.first, providerName));
-                });
+                providerName -> mSubHeaderTextLiveData.setValue(
+                        new Pair<>(mSubheaderTextId, providerName)));
+        DeviceStateController stateController =
+                ((DeviceLockControllerApplication) application).getStateController();
+        mDeviceState.setValue(stateController.getState());
+        stateController.addCallback(mStateListener);
 
         Futures.addCallback(
                 SetupParametersClient.getInstance().getKioskAppProviderName(),
@@ -140,5 +131,12 @@ public abstract class ProvisionInfoViewModel extends ViewModel {
                         LogUtil.e(TAG, "Failed to get if provision should be forced", t);
                     }
                 }, MoreExecutors.directExecutor());
+    }
+
+    @Override
+    public void onCleared() {
+        LogUtil.d(TAG, "onCleared");
+        ((DeviceLockControllerApplication) getApplication()).getStateController()
+                .removeCallback(mStateListener);
     }
 }

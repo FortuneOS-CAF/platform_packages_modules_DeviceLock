@@ -16,6 +16,8 @@
 
 package com.android.devicelockcontroller.activities;
 
+import static com.android.devicelockcontroller.activities.ProvisioningActivity.EXTRA_SHOW_PROVISION_FAILED_UI_ON_START;
+
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import android.annotation.SuppressLint;
@@ -24,6 +26,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
+import android.content.Intent;
 import android.os.SystemClock;
 import android.widget.RemoteViews;
 
@@ -54,7 +57,7 @@ public final class DeviceLockNotificationManager {
     private static final String PROVISION_NOTIFICATION_CHANNEL_ID = "devicelock-provision";
     private static final String DEVICE_RESET_NOTIFICATION_TAG = "devicelock-device-reset";
     private static final int DEVICE_RESET_NOTIFICATION_ID = 0;
-    private static final int DEFER_ENROLLMENT_NOTIFICATION_ID = 1;
+    private static final int DEFER_PROVISIONING_NOTIFICATION_ID = 1;
 
     /**
      * Similar to {@link #sendDeviceResetNotification(Context, int)}, except that:
@@ -155,7 +158,7 @@ public final class DeviceLockNotificationManager {
 
     // Already requested POST_NOTIFICATION permission in ProvisionInfoFragment
     @SuppressLint("MissingPermission")
-    public static void sendDeferredEnrollmentNotification(Context context,
+    static void sendDeferredProvisioningNotification(Context context,
             LocalDateTime resumeDateTime, PendingIntent pendingIntent) {
         createNotificationChannel(context);
         DateTimeFormatter timeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT);
@@ -171,14 +174,19 @@ public final class DeviceLockNotificationManager {
                 .setOngoing(true);
         NotificationManagerCompat notificationManager =
                 NotificationManagerCompat.from(context);
-        notificationManager.notify(DEFER_ENROLLMENT_NOTIFICATION_ID, notificationBuilder.build());
+        notificationManager.notify(DEFER_PROVISIONING_NOTIFICATION_ID, notificationBuilder.build());
+    }
+
+    static void cancelDeferredProvisioningNotification(Context context) {
+        LogUtil.d(TAG, "cancelDeferredEnrollmentNotification");
+        NotificationManagerCompat.from(context).cancel(DEFER_PROVISIONING_NOTIFICATION_ID);
     }
 
     private static ListenableFuture<Notification> createDeviceResetNotification(Context context,
             int days, boolean ongoing) {
         return Futures.transform(SetupParametersClient.getInstance().getKioskAppProviderName(),
                 providerName ->
-                        // TODO: update the icon
+                        // TODO(b/291951742): update the icon
                         new NotificationCompat.Builder(context, PROVISION_NOTIFICATION_CHANNEL_ID)
                                 .setSmallIcon(R.drawable.ic_action_lock)
                                 .setOngoing(ongoing)
@@ -186,7 +194,14 @@ public final class DeviceLockNotificationManager {
                                         R.string.device_reset_in_days_notification_title))
                                 .setContentText(context.getString(
                                         R.string.device_reset_notification_content,
-                                        providerName)).build(),
+                                        providerName))
+                                .setContentIntent(
+                                        PendingIntent.getActivity(context, /* requestCode= */0,
+                                                new Intent(context,
+                                                        ProvisioningActivity.class).putExtra(
+                                                        EXTRA_SHOW_PROVISION_FAILED_UI_ON_START,
+                                                        true),
+                                                PendingIntent.FLAG_IMMUTABLE)).build(),
                 context.getMainExecutor());
     }
 
