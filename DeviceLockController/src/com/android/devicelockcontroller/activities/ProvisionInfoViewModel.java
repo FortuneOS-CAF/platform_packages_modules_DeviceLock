@@ -25,8 +25,6 @@ import androidx.lifecycle.AndroidViewModel;
 import androidx.lifecycle.MediatorLiveData;
 import androidx.lifecycle.MutableLiveData;
 
-import com.android.devicelockcontroller.DeviceLockControllerApplication;
-import com.android.devicelockcontroller.policy.DeviceStateController;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
 import com.android.devicelockcontroller.util.LogUtil;
@@ -46,48 +44,30 @@ public abstract class ProvisionInfoViewModel extends AndroidViewModel {
 
     public static final String TAG = "ProvisionInfoViewModel";
     int mHeaderDrawableId;
+    int mMandatoryHeaderTextId;
     int mHeaderTextId;
-    int mSubheaderTextId;
+    int mMandatorySubHeaderTextId;
+    int mSubHeaderTextId;
     List<ProvisionInfo> mProvisionInfoList;
+    final MutableLiveData<Boolean> mIsMandatoryLiveData = new MutableLiveData<>();
     final MutableLiveData<String> mProviderNameLiveData;
     final MutableLiveData<String> mTermsAndConditionsUrlLiveData;
     final MutableLiveData<Boolean> mIsProvisionForcedLiveData;
-    final MediatorLiveData<Pair<Integer, String>> mHeaderTextLiveData;
-    final MediatorLiveData<Pair<Integer, String>> mSubHeaderTextLiveData;
+    final MutableLiveData<Pair<Integer, String>> mHeaderTextLiveData = new MutableLiveData<>();
+    final MutableLiveData<Pair<Integer, String>> mSubHeaderTextLiveData = new MutableLiveData<>();
     final MediatorLiveData<List<ProvisionInfo>> mProvisionInfoListLiveData;
-
-    final MutableLiveData<@DeviceStateController.DeviceState Integer> mDeviceState =
-            new MutableLiveData<>();
-
-    private final DeviceStateController.StateListener mStateListener = newState -> {
-        mDeviceState.postValue(newState);
-        LogUtil.d("ProvisionInfoViewModel", "deviceStateListener, newState: " + newState);
-        return Futures.immediateVoidFuture();
-    };
 
     public ProvisionInfoViewModel(@NonNull Application application) {
         super(application);
         mProviderNameLiveData = new MutableLiveData<>();
         mTermsAndConditionsUrlLiveData = new MutableLiveData<>();
         mIsProvisionForcedLiveData = new MutableLiveData<>();
-        mHeaderTextLiveData = new MediatorLiveData<>();
-        mHeaderTextLiveData.addSource(mProviderNameLiveData,
-                providerName -> mHeaderTextLiveData.setValue(
-                        new Pair<>(mHeaderTextId, providerName)));
-        mSubHeaderTextLiveData = new MediatorLiveData<>();
-        mSubHeaderTextLiveData.addSource(mProviderNameLiveData,
-                providerName -> mSubHeaderTextLiveData.setValue(
-                        new Pair<>(mSubheaderTextId, providerName)));
         mProvisionInfoListLiveData = new MediatorLiveData<>();
-
-        DeviceStateController stateController =
-                ((DeviceLockControllerApplication) application).getStateController();
-        mDeviceState.setValue(stateController.getState());
-        stateController.addCallback(mStateListener);
 
         SetupParametersClient setupParametersClient = SetupParametersClient.getInstance();
         ListenableFuture<String> getKioskAppProviderNameFuture =
                 setupParametersClient.getKioskAppProviderName();
+        ListenableFuture<Boolean> isMandatoryFuture = setupParametersClient.isProvisionMandatory();
         ListenableFuture<String> getTermsAndConditionsUrlFuture =
                 setupParametersClient.getTermsAndConditionsUrl();
 
@@ -106,6 +86,31 @@ public abstract class ProvisionInfoViewModel extends AndroidViewModel {
                     @Override
                     public void onFailure(Throwable t) {
                         LogUtil.e(TAG, "Failed to get Kiosk app provider name", t);
+                    }
+                }, MoreExecutors.directExecutor());
+
+        Futures.whenAllSucceed(isMandatoryFuture, getKioskAppProviderNameFuture).call(
+                () -> {
+                    Boolean isMandatory = Futures.getDone(isMandatoryFuture);
+                    String kioskProviderName = Futures.getDone(getKioskAppProviderNameFuture);
+                    mHeaderTextLiveData.postValue(new Pair<>(
+                            isMandatory ? mMandatoryHeaderTextId : mHeaderTextId,
+                            kioskProviderName));
+                    mSubHeaderTextLiveData.postValue(new Pair<>(
+                            isMandatory ? mMandatorySubHeaderTextId : mSubHeaderTextId,
+                            kioskProviderName));
+                    return null;
+                }, MoreExecutors.directExecutor());
+        Futures.addCallback(isMandatoryFuture,
+                new FutureCallback<>() {
+                    @Override
+                    public void onSuccess(Boolean isMandatory) {
+                        mIsMandatoryLiveData.postValue(isMandatory);
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        LogUtil.e(TAG, "Failed to know if provision is mandatory", t);
                     }
                 }, MoreExecutors.directExecutor());
 
@@ -143,12 +148,5 @@ public abstract class ProvisionInfoViewModel extends AndroidViewModel {
                         LogUtil.e(TAG, "Failed to get if provision should be forced", t);
                     }
                 }, MoreExecutors.directExecutor());
-    }
-
-    @Override
-    public void onCleared() {
-        LogUtil.d(TAG, "onCleared");
-        ((DeviceLockControllerApplication) getApplication()).getStateController()
-                .removeCallback(mStateListener);
     }
 }

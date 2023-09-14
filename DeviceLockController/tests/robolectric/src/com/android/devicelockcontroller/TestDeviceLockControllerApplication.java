@@ -23,8 +23,10 @@ import android.app.Application;
 
 import com.android.devicelockcontroller.policy.DevicePolicyController;
 import com.android.devicelockcontroller.policy.DeviceStateController;
+import com.android.devicelockcontroller.policy.FinalizationController;
 import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
-import com.android.devicelockcontroller.policy.SetupController;
+import com.android.devicelockcontroller.policy.ProvisionHelper;
+import com.android.devicelockcontroller.policy.ProvisionStateController;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.GlobalParametersService;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
@@ -45,12 +47,14 @@ public final class TestDeviceLockControllerApplication extends Application imple
 
     private DevicePolicyController mPolicyController;
     private DeviceStateController mStateController;
-    private SetupController mSetupController;
+    private ProvisionHelper mProvisionHelper;
+    private ProvisionStateController mUserStateController;
+    private FinalizationController mFinalizationController;
     private SetupParametersClient mSetupParametersClient;
     private GlobalParametersClient mGlobalParametersClient;
 
     @Override
-    public DeviceStateController getStateController() {
+    public DeviceStateController getDeviceStateController() {
         if (mStateController == null) {
             mStateController = mock(DeviceStateController.class);
         }
@@ -58,27 +62,39 @@ public final class TestDeviceLockControllerApplication extends Application imple
     }
 
     @Override
+    public ProvisionStateController getProvisionStateController() {
+        if (mUserStateController == null) {
+            mUserStateController = mock(ProvisionStateController.class);
+            when(mUserStateController.getDevicePolicyController()).thenReturn(
+                    getPolicyController());
+            when(mUserStateController.getDeviceStateController()).thenReturn(
+                    getDeviceStateController());
+
+        }
+        return mUserStateController;
+    }
+
+    @Override
     public DevicePolicyController getPolicyController() {
         if (mPolicyController == null) {
             mPolicyController = mock(DevicePolicyController.class);
-            when(mPolicyController.getStateController()).thenReturn(getStateController());
         }
         return mPolicyController;
     }
 
     @Override
-    public SetupController getSetupController() {
-        if (mSetupController == null) {
-            mSetupController = mock(SetupController.class);
+    public FinalizationController getFinalizationController() {
+        if (mFinalizationController == null) {
+            mFinalizationController = mock(FinalizationController.class);
         }
-        return mSetupController;
+        return mFinalizationController;
     }
 
     @Override
     public void destroyObjects() {
         mPolicyController = null;
         mStateController = null;
-        mSetupController = null;
+        mProvisionHelper = null;
     }
 
 
