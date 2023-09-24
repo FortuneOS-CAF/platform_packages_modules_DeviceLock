@@ -22,38 +22,44 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.Intent;
+import android.os.Handler;
+import android.os.HandlerThread;
 
 import androidx.test.core.app.ApplicationProvider;
 
-import com.android.devicelockcontroller.AbstractDeviceLockControllerScheduler;
 import com.android.devicelockcontroller.TestDeviceLockControllerApplication;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerScheduler;
 import com.android.devicelockcontroller.storage.UserParameters;
 
 import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.testing.TestingExecutors;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.robolectric.RobolectricTestRunner;
+import org.robolectric.Shadows;
+import org.robolectric.shadows.ShadowLooper;
 
 @RunWith(RobolectricTestRunner.class)
 public final class CheckInBootCompletedReceiverTest {
 
     public static final Intent INTENT = new Intent(Intent.ACTION_BOOT_COMPLETED);
-    @Mock
-    private AbstractDeviceLockControllerScheduler mScheduler;
+    private DeviceLockControllerScheduler mScheduler;
     private CheckInBootCompletedReceiver mReceiver;
     private TestDeviceLockControllerApplication mTestApp;
+    private ShadowLooper mShadowLooper;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        mReceiver = new CheckInBootCompletedReceiver(mScheduler,
-                TestingExecutors.sameThreadScheduledExecutor());
+        HandlerThread handlerThread = new HandlerThread("test");
+        handlerThread.start();
+        Handler handler = handlerThread.getThreadHandler();
+        mShadowLooper = Shadows.shadowOf(handler.getLooper());
+        mReceiver = new CheckInBootCompletedReceiver(
+                MoreExecutors.newSequentialExecutor(handler::post));
         mTestApp = ApplicationProvider.getApplicationContext();
+        mScheduler = mTestApp.getDeviceLockControllerScheduler();
     }
 
     @Test
@@ -64,13 +70,15 @@ public final class CheckInBootCompletedReceiverTest {
 
         mReceiver.onReceive(mTestApp, INTENT);
 
-        verify(mScheduler).rescheduleRetryCheckInWorkIfNeeded();
+        mShadowLooper.idle();
+        verify(mScheduler).notifyNeedRescheduleCheckIn();
     }
 
     @Test
     public void onReceive_shouldScheduleInitialCheckIn() {
         mReceiver.onReceive(mTestApp, INTENT);
 
+        mShadowLooper.idle();
         verify(mScheduler).scheduleInitialCheckInWork();
     }
 }

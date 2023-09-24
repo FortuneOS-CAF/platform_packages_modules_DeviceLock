@@ -16,10 +16,13 @@
 
 package com.android.devicelockcontroller;
 
+import static com.android.devicelockcontroller.util.ThreadUtils.assertMainThread;
+
 import android.app.Application;
 import android.content.Context;
 
 import androidx.annotation.MainThread;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.work.Configuration;
 import androidx.work.DelegatingWorkerFactory;
@@ -32,18 +35,25 @@ import com.android.devicelockcontroller.policy.FinalizationControllerImpl;
 import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
 import com.android.devicelockcontroller.policy.ProvisionStateController;
 import com.android.devicelockcontroller.policy.ProvisionStateControllerImpl;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerScheduler;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerImpl;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerProvider;
 import com.android.devicelockcontroller.util.LogUtil;
+
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 
 /**
  * Application class for Device Lock Controller.
  */
 public class DeviceLockControllerApplication extends Application implements
-        PolicyObjectsInterface, Configuration.Provider {
+        PolicyObjectsInterface, Configuration.Provider, DeviceLockControllerSchedulerProvider {
     private static final String TAG = "DeviceLockControllerApplication";
 
     private static Context sApplicationContext;
     private ProvisionStateController mProvisionStateController;
     private FinalizationController mFinalizationController;
+    private DeviceLockControllerScheduler mDeviceLockControllerScheduler;
 
     @Override
     public void onCreate() {
@@ -55,12 +65,14 @@ public class DeviceLockControllerApplication extends Application implements
     @Override
     @MainThread
     public DeviceStateController getDeviceStateController() {
+        assertMainThread("getDeviceStateController");
         return getProvisionStateController().getDeviceStateController();
     }
 
     @Override
     @MainThread
     public ProvisionStateController getProvisionStateController() {
+        assertMainThread("getProvisionStateController");
         if (mProvisionStateController == null) {
             mProvisionStateController = new ProvisionStateControllerImpl(this);
         }
@@ -70,12 +82,14 @@ public class DeviceLockControllerApplication extends Application implements
     @Override
     @MainThread
     public DevicePolicyController getPolicyController() {
+        assertMainThread("getPolicyController");
         return getProvisionStateController().getDevicePolicyController();
     }
 
     @Override
     @MainThread
     public FinalizationController getFinalizationController() {
+        assertMainThread("getFinalizationController");
         if (mFinalizationController == null) {
             mFinalizationController = new FinalizationControllerImpl(this);
         }
@@ -85,6 +99,7 @@ public class DeviceLockControllerApplication extends Application implements
     @Override
     @MainThread
     public void destroyObjects() {
+        assertMainThread("destroyObjects");
         mProvisionStateController = null;
         mFinalizationController = null;
     }
@@ -107,5 +122,21 @@ public class DeviceLockControllerApplication extends Application implements
     @Nullable
     public Class<? extends ListenableWorker> getPlayInstallPackageTaskClass() {
         return null;
+    }
+
+    @NonNull
+    public ListenableFuture<String> getFcmRegistrationToken() {
+        return Futures.immediateFuture(null);
+    }
+
+    @Override
+    @MainThread
+    public DeviceLockControllerScheduler getDeviceLockControllerScheduler() {
+        assertMainThread("getDeviceLockControllerScheduler");
+        if (mDeviceLockControllerScheduler == null) {
+            mDeviceLockControllerScheduler = new DeviceLockControllerSchedulerImpl(this,
+                    getProvisionStateController());
+        }
+        return mDeviceLockControllerScheduler;
     }
 }

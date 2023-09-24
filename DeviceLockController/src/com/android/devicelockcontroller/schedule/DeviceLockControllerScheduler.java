@@ -14,64 +14,65 @@
  * limitations under the License.
  */
 
-package com.android.devicelockcontroller;
+package com.android.devicelockcontroller.schedule;
 
 import java.time.Duration;
 
-/** The abstraction of {@link DeviceLockControllerScheduler} */
-public abstract class AbstractDeviceLockControllerScheduler {
+/**
+ * An interface which provides APIs to notify the scheduler to schedule works/alarms based on event
+ * happened.
+ */
+public interface DeviceLockControllerScheduler {
 
     /**
-     * Correct the stored expected to run time based on the time change delta.
-     *
-     * @param delta The duration from time before change to time after change. This value could be
-     *              negative.
+     * Notify the scheduler that system time has changed.
      */
-    public abstract void correctExpectedToRunTime(Duration delta);
+    void notifyTimeChanged();
 
     /**
-     * Reschedule the retry check-in work if needed.
+     * Notify the scheduler that reschedule might be required for check-in work
      */
-    public abstract void rescheduleRetryCheckInWorkIfNeeded();
+    void notifyNeedRescheduleCheckIn();
 
     /**
      * Schedule an alarm to resume the provision flow.
      */
-    public abstract void scheduleResumeProvisionAlarm();
+    void scheduleResumeProvisionAlarm();
 
-    /** Reschedule the resume provision alarm if needed */
-    public abstract void rescheduleResumeProvisionAlarmIfNeeded();
+    /**
+     * Notify the scheduler that device reboot when provision is paused.
+     */
+    void notifyRebootWhenProvisionPaused();
 
     /**
      * Schedule the initial check-in work when device first boot.
      */
-    public abstract void scheduleInitialCheckInWork();
+    void scheduleInitialCheckInWork();
 
     /**
      * Schedule the retry check-in work with a delay.
      *
      * @param delay The delayed duration to wait for performing retry check-in work.
      */
-    public abstract void scheduleRetryCheckInWork(Duration delay);
+    void scheduleRetryCheckInWork(Duration delay);
 
     /**
      * Schedule an alarm to perform next provision failed step with the default delay.
      */
-    public abstract void scheduleNextProvisionFailedStepAlarm();
+    void scheduleNextProvisionFailedStepAlarm();
 
-    /** Reschedule the next provision failed step alarm if needed */
-    public abstract void rescheduleNextProvisionFailedStepAlarmIfNeeded();
+    /**
+     * Notify the scheduler that device reboot when provision has failed.
+     */
+    void notifyRebootWhenProvisionFailed();
 
     /**
      * Schedule an alarm to factory reset the device in case of provision is failed.
      */
-    public abstract void scheduleResetDeviceAlarm();
+    void scheduleResetDeviceAlarm();
 
     /**
      * Schedule an alarm to factory reset the device in case of mandatory provision is failed.
      */
-    public abstract void scheduleMandatoryResetDeviceAlarm();
-
-    /** Reschedule the reset device alarm if needed */
-    public abstract void rescheduleResetDeviceAlarmIfNeeded();
+    void scheduleMandatoryResetDeviceAlarm();
 }

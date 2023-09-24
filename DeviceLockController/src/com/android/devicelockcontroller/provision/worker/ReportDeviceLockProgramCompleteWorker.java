@@ -25,6 +25,8 @@ import androidx.work.ListenableWorker;
 import androidx.work.WorkerParameters;
 
 import com.android.devicelockcontroller.R;
+import com.android.devicelockcontroller.policy.FinalizationController;
+import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
 import com.android.devicelockcontroller.provision.grpc.DeviceFinalizeClient;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 
@@ -41,16 +43,22 @@ public final class ReportDeviceLockProgramCompleteWorker extends ListenableWorke
     public static final String REPORT_DEVICE_LOCK_PROGRAM_COMPLETE_WORK_NAME =
             "report-device-lock-program-complete";
     private final ListenableFuture<DeviceFinalizeClient> mClient;
+    private final PolicyObjectsInterface mPolicyObjectsInterface;
 
     public ReportDeviceLockProgramCompleteWorker(@NonNull Context context,
             @NonNull WorkerParameters workerParams, ListeningExecutorService executorService) {
-        this(context, workerParams, null, executorService);
-
+        this(context,
+                workerParams,
+                null,
+                ((PolicyObjectsInterface) context.getApplicationContext()),
+                executorService);
     }
 
     @VisibleForTesting
     ReportDeviceLockProgramCompleteWorker(@NonNull Context context,
-            @NonNull WorkerParameters workerParams, DeviceFinalizeClient client,
+            @NonNull WorkerParameters workerParams,
+            DeviceFinalizeClient client,
+            PolicyObjectsInterface policyObjectsInterface,
             ListeningExecutorService executorService) {
         super(context, workerParams);
         if (client == null) {
@@ -71,21 +79,24 @@ public final class ReportDeviceLockProgramCompleteWorker extends ListenableWorke
         } else {
             mClient = Futures.immediateFuture(client);
         }
+        mPolicyObjectsInterface = policyObjectsInterface;
     }
 
     @NonNull
     @Override
     public ListenableFuture<Result> startWork() {
-        return Futures.transform(mClient, client -> {
+        FinalizationController controller = mPolicyObjectsInterface.getFinalizationController();
+        return Futures.transformAsync(mClient, client -> {
             DeviceFinalizeClient.ReportDeviceProgramCompleteResponse response =
                     client.reportDeviceProgramComplete();
-            if (response.isSuccessful()) {
-                return Result.success();
-            } else if (response.hasRecoverableError()) {
-                return Result.retry();
-            } else {
-                return Result.failure();
+            if (response.hasRecoverableError()) {
+                return Futures.immediateFuture(Result.retry());
             }
-        }, MoreExecutors.directExecutor());
+            ListenableFuture<Void> notifyFuture =
+                    controller.notifyFinalizationReportResult(response);
+            return Futures.transform(notifyFuture,
+                    unused -> response.isSuccessful() ? Result.success() : Result.failure(),
+                    MoreExecutors.directExecutor());
+        }, getBackgroundExecutor());
     }
 }

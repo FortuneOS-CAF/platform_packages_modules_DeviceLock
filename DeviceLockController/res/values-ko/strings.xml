@@ -48,9 +48,8 @@
     <string name="device_provided_by_provider" msgid="290593329676291991">"<xliff:g id="PROVIDER_NAME">%1$s</xliff:g>에서 제공하는 기기"</string>
     <string name="download_kiosk_app" msgid="1845089944897502656">"키오스크 앱이 자동으로 다운로드 및 설치됩니다."</string>
     <string name="install_kiosk_app_secondary_user" msgid="49911908012320834">"키오스크 앱이 이 사용자를 위해 설치됩니다."</string>
-    <string name="restrict_device_if_missing_payment" msgid="5721216628714899148">"결제를 하지 않으면 <xliff:g id="PROVIDER_NAME">%1$s</xliff:g>에서 이 기기 사용을 제한할 수 있습니다."</string>
+    <string name="restrict_device_if_missing_payment" msgid="2907880869705064855">"결제를 하지 않으면 <xliff:g id="PROVIDER_NAME">%1$s</xliff:g>에서 이 기기 사용을 제한할 수 있습니다."</string>
     <string name="restrict_device_if_dont_make_payment" msgid="1619095674945507015">"필수 결제를 진행하지 않으면 <xliff:g id="PROVIDER_NAME">%1$s</xliff:g>에서 이 기기 사용을 제한할 수 있습니다. 자세한 내용은 <xliff:g id="TERMS_AND_CONDITIONS_LINK_START">&lt;a href=%2$s&gt;</xliff:g>이용약관<xliff:g id="TERMS_AND_CONDITIONS_LINK_END">&lt;/a&gt;</xliff:g>에서 확인하세요."</string>
-    <string name="restrict_device_if_owner_doesnt_make_payment" msgid="3841412765931627895">"기기 소유자가 결제를 하지 않으면 <xliff:g id="PROVIDER_NAME">%1$s</xliff:g>에서 이 기기 사용을 제한할 수 있습니다."</string>
     <string name="previous" msgid="5241891780917802570">"이전"</string>
     <string name="next" msgid="8248291863254324326">"다음"</string>
     <string name="start" msgid="2842214844667658537">"시작"</string>
@@ -81,7 +80,10 @@
     <string name="settings_banner_body" msgid="5814902066260202824">"<xliff:g id="PROVIDER_NAME">%1$s</xliff:g>에서 이 기기의 설정을 변경할 수 있습니다."</string>
     <string name="settings_banner_button" msgid="1831020849782670907">"자세히 알아보기"</string>
     <string name="settings_screen_title" msgid="721470080648091035">"할부 기기 정보"</string>
-    <string name="settings_intro" msgid="5809531331925309396">"신용 상품 제공업체는 이 기기의 설정을 변경하고 키오스크 앱을 설치할 수 있습니다.\n\n필수 결제를 놓치거나 <xliff:g id="PROVIDER_NAME_1">%1$s</xliff:g>의 SIM 사용을 중지하면 <xliff:g id="PROVIDER_NAME_0">%1$s</xliff:g>에서 기기를 잠그고 기기 설정을 변경할 수 있습니다.\n\n자세한 내용은 <xliff:g id="PROVIDER_NAME_2">%1$s</xliff:g>에 문의하세요."</string>
+    <!-- no translation found for settings_intro_device_financing (2548476558131048133) -->
+    <skip />
+    <!-- no translation found for settings_intro_device_subsidy (4274945644204818702) -->
+    <skip />
     <string name="settings_intro_preference_key" msgid="6610461073400554162">"settings_intro_preference_key"</string>
     <string name="settings_restrictions_category" msgid="5746868117342406677">"기기 대금을 결제하지 않으면 다음 작업을 할 수 없습니다."</string>
     <string name="settings_restrictions_category_preference_key" msgid="88318147152676512">"settings_restrictions_category_preference_key"</string>
@@ -89,8 +91,6 @@
     <string name="settings_install_apps_preference_key" msgid="27542314345238427">"settings_install_apps_preference_key"</string>
     <string name="settings_safe_mode" msgid="3035228015586375153">"기기를 안전 모드로 재부팅"</string>
     <string name="settings_safe_mode_preference_key" msgid="2106617747358027424">"settings_safe_mode_preference_key"</string>
-    <string name="settings_config_date_time" msgid="3406612829802458778">"날짜, 시간 및 시간대 변경"</string>
-    <string name="settings_config_date_time_preference_key" msgid="1838160765185598823">"settings_config_date_time_preference_key"</string>
     <string name="settings_developer_options" msgid="880701002025216672">"개발자 옵션 사용"</string>
     <string name="settings_developer_options_preference_key" msgid="6807036808722582954">"settings_developer_options_preference_key"</string>
     <string name="settings_credit_provider_capabilities_category" msgid="1274440595211820868">"기기에 문제가 생기면 <xliff:g id="PROVIDER_NAME">%1$s</xliff:g>에서 다음 조치를 취할 수 있습니다."</string>
