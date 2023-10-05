@@ -16,12 +16,10 @@
 
 package com.android.devicelockcontroller;
 
-import static com.android.devicelockcontroller.util.ThreadUtils.assertMainThread;
-
 import android.app.Application;
 import android.content.Context;
 
-import androidx.annotation.MainThread;
+import androidx.annotation.GuardedBy;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.work.Configuration;
@@ -47,12 +45,18 @@ import com.google.common.util.concurrent.ListenableFuture;
  * Application class for Device Lock Controller.
  */
 public class DeviceLockControllerApplication extends Application implements
-        PolicyObjectsInterface, Configuration.Provider, DeviceLockControllerSchedulerProvider {
+        PolicyObjectsInterface,
+        Configuration.Provider,
+        DeviceLockControllerSchedulerProvider,
+        FcmRegistrationTokenProvider {
     private static final String TAG = "DeviceLockControllerApplication";
 
     private static Context sApplicationContext;
+    @GuardedBy("this")
     private ProvisionStateController mProvisionStateController;
+    @GuardedBy("this")
     private FinalizationController mFinalizationController;
+    @GuardedBy("this")
     private DeviceLockControllerScheduler mDeviceLockControllerScheduler;
 
     @Override
@@ -63,16 +67,12 @@ public class DeviceLockControllerApplication extends Application implements
     }
 
     @Override
-    @MainThread
     public DeviceStateController getDeviceStateController() {
-        assertMainThread("getDeviceStateController");
         return getProvisionStateController().getDeviceStateController();
     }
 
     @Override
-    @MainThread
-    public ProvisionStateController getProvisionStateController() {
-        assertMainThread("getProvisionStateController");
+    public synchronized ProvisionStateController getProvisionStateController() {
         if (mProvisionStateController == null) {
             mProvisionStateController = new ProvisionStateControllerImpl(this);
         }
@@ -80,16 +80,12 @@ public class DeviceLockControllerApplication extends Application implements
     }
 
     @Override
-    @MainThread
     public DevicePolicyController getPolicyController() {
-        assertMainThread("getPolicyController");
         return getProvisionStateController().getDevicePolicyController();
     }
 
     @Override
-    @MainThread
-    public FinalizationController getFinalizationController() {
-        assertMainThread("getFinalizationController");
+    public synchronized FinalizationController getFinalizationController() {
         if (mFinalizationController == null) {
             mFinalizationController = new FinalizationControllerImpl(this);
         }
@@ -97,9 +93,7 @@ public class DeviceLockControllerApplication extends Application implements
     }
 
     @Override
-    @MainThread
-    public void destroyObjects() {
-        assertMainThread("destroyObjects");
+    public synchronized void destroyObjects() {
         mProvisionStateController = null;
         mFinalizationController = null;
     }
@@ -124,15 +118,14 @@ public class DeviceLockControllerApplication extends Application implements
         return null;
     }
 
+    @Override
     @NonNull
     public ListenableFuture<String> getFcmRegistrationToken() {
         return Futures.immediateFuture(null);
     }
 
     @Override
-    @MainThread
-    public DeviceLockControllerScheduler getDeviceLockControllerScheduler() {
-        assertMainThread("getDeviceLockControllerScheduler");
+    public synchronized DeviceLockControllerScheduler getDeviceLockControllerScheduler() {
         if (mDeviceLockControllerScheduler == null) {
             mDeviceLockControllerScheduler = new DeviceLockControllerSchedulerImpl(this,
                     getProvisionStateController());

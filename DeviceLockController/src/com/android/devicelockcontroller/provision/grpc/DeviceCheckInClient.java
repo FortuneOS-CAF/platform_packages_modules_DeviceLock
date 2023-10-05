@@ -27,6 +27,7 @@ import androidx.annotation.WorkerThread;
 import com.android.devicelockcontroller.common.DeviceId;
 import com.android.devicelockcontroller.common.DeviceLockConstants.DeviceProvisionState;
 import com.android.devicelockcontroller.common.DeviceLockConstants.PauseDeviceProvisioningReason;
+import com.android.devicelockcontroller.common.DeviceLockConstants.ProvisionFailureReason;
 import com.android.devicelockcontroller.util.LogUtil;
 
 /**
@@ -61,14 +62,9 @@ public abstract class DeviceCheckInClient {
             try {
                 boolean createRequired =
                         (sClient == null || sUseDebugClient != useDebugClient)
-                                ? true
-                                : (registeredId != null && !registeredId.equals(sRegisteredId))
-                                        ? true
-                                        : (hostName != null && !hostName.equals(sHostName))
-                                                ? true
-                                                : (apiKey != null && !apiKey.equals(sApiKey))
-                                                        ? true
-                                                        : false;
+                                || (registeredId != null && !registeredId.equals(sRegisteredId))
+                                || (hostName != null && !hostName.equals(sHostName))
+                                || (apiKey != null && !apiKey.equals(sApiKey));
 
                 if (createRequired) {
                     sHostName = hostName;
@@ -145,5 +141,5 @@ public abstract class DeviceCheckInClient {
     @WorkerThread
     public abstract ReportDeviceProvisionStateGrpcResponse reportDeviceProvisionState(
             @DeviceProvisionState int lastReceivedProvisionState,
-            boolean isSuccessful);
+            boolean isSuccessful, @ProvisionFailureReason int failureReason);
 }

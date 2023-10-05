@@ -14,19 +14,20 @@
  * limitations under the License.
  */
 
-package com.android.devicelockcontroller.receivers;
+package com.android.devicelockcontroller;
 
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
+import androidx.annotation.NonNull;
 
-import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
+import com.google.common.util.concurrent.ListenableFuture;
 
-/** A receiver to handle explicit provision ready intent */
-public final class ProvisionReadyReceiver extends BroadcastReceiver {
-    @Override
-    public void onReceive(Context context, Intent intent) {
-        ((PolicyObjectsInterface) context.getApplicationContext())
-                .getProvisionStateController().notifyProvisioningReady();
-    }
+/**
+ * Interface to retrieve FCM registration token.
+ */
+public interface FcmRegistrationTokenProvider {
+
+    /**
+     * Returns the FCM registration token.
+     */
+    @NonNull
+    ListenableFuture<String> getFcmRegistrationToken();
 }
