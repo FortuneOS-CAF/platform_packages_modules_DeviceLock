@@ -32,7 +32,6 @@ import com.android.devicelockcontroller.util.LogUtil;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
-import com.google.common.util.concurrent.MoreExecutors;
 
 import java.time.Duration;
 
@@ -42,6 +41,7 @@ import java.time.Duration;
 public final class DeviceCheckInWorker extends AbstractCheckInWorker {
 
     private final AbstractDeviceCheckInHelper mCheckInHelper;
+
     @VisibleForTesting
     static final Duration RETRY_ON_FAILURE_DELAY = Duration.ofDays(1);
 
@@ -97,7 +97,7 @@ public final class DeviceCheckInWorker extends AbstractCheckInWorker {
                                 + RETRY_ON_FAILURE_DELAY);
                         scheduler.scheduleRetryCheckInWork(RETRY_ON_FAILURE_DELAY);
                         return Result.failure();
-                    }, MoreExecutors.directExecutor());
-                }, MoreExecutors.directExecutor());
+                    }, mExecutorService);
+                }, mExecutorService);
     }
 }
