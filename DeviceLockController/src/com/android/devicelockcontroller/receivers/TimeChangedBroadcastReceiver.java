@@ -19,19 +19,10 @@ package com.android.devicelockcontroller.receivers;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.SystemClock;
 import android.os.UserManager;
 
-import androidx.annotation.VisibleForTesting;
-
-import com.android.devicelockcontroller.AbstractDeviceLockControllerScheduler;
-import com.android.devicelockcontroller.DeviceLockControllerScheduler;
-import com.android.devicelockcontroller.storage.UserParameters;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerProvider;
 import com.android.devicelockcontroller.util.LogUtil;
-
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
 
 /**
  * Handle {@link Intent#ACTION_TIME_CHANGED}. This receiver runs for every user.
@@ -42,18 +33,6 @@ import java.time.Instant;
 public final class TimeChangedBroadcastReceiver extends BroadcastReceiver {
 
     private static final String TAG = "TimeChangedBroadcastReceiver";
-    private AbstractDeviceLockControllerScheduler mScheduler;
-    private Clock mClock;
-
-    public TimeChangedBroadcastReceiver() {
-        this(null, Clock.systemUTC());
-    }
-
-    @VisibleForTesting
-    TimeChangedBroadcastReceiver(AbstractDeviceLockControllerScheduler scheduler, Clock clock) {
-        mScheduler = scheduler;
-        mClock = clock;
-    }
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -68,13 +47,9 @@ public final class TimeChangedBroadcastReceiver extends BroadcastReceiver {
         if (isUserProfile) {
             return;
         }
-        if (mScheduler == null) mScheduler = new DeviceLockControllerScheduler(context);
+        DeviceLockControllerSchedulerProvider schedulerProvider =
+                (DeviceLockControllerSchedulerProvider) context.getApplicationContext();
 
-        long bootTimestamp = UserParameters.getBootTimeMillis(context);
-        Instant bootInstant = Instant.ofEpochMilli(bootTimestamp);
-
-        mScheduler.correctExpectedToRunTime(
-                Duration.between(bootInstant.plusMillis(
-                        SystemClock.elapsedRealtime()), Instant.now(mClock)));
+        schedulerProvider.getDeviceLockControllerScheduler().notifyTimeChanged();
     }
 }

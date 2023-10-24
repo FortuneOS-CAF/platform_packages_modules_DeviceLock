@@ -33,13 +33,15 @@ import static com.android.devicelockcontroller.policy.ProvisionStateController.P
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
+import android.net.Uri;
+import android.provider.Settings;
 
 import androidx.annotation.GuardedBy;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
-import androidx.work.WorkManager;
 
-import com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionStateWorker;
 import com.android.devicelockcontroller.receivers.LockedBootCompletedReceiver;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.UserParameters;
@@ -109,32 +111,37 @@ public final class ProvisionStateControllerImpl implements ProvisionStateControl
     @Override
     public ListenableFuture<Void> setNextStateForEvent(@ProvisionEvent int event) {
         synchronized (this) {
-            mCurrentStateFuture = Futures.transform(getState(),
-                    currentState -> {
-                        int newState = getNextState(currentState, event);
-                        UserParameters.setProvisionState(mContext, newState);
-                        handleNewState(newState);
-                        return newState;
-                    }, mBgExecutor);
-            return Futures.transformAsync(mCurrentStateFuture,
+            // getState() must be called here and assigned to a local variable, otherwise, if
+            // retrieved down the execution flow, it will be returning the new state after
+            // execution.
+            ListenableFuture<@ProvisionState Integer> currentStateFuture = getState();
+            ListenableFuture<@ProvisionState Integer> stateTransitionFuture =
+                    Futures.transform(
+                            currentStateFuture,
+                            currentState -> {
+                                int newState = getNextState(currentState, event);
+                                UserParameters.setProvisionState(mContext, newState);
+                                handleNewState(newState);
+                                return newState;
+                            }, mBgExecutor);
+            // To prevent exception propagate to future state transitions, catch any exceptions
+            // that might happen during the execution and fallback to previous state if exception
+            // happens.
+            mCurrentStateFuture = Futures.catchingAsync(stateTransitionFuture, Exception.class,
+                    input -> currentStateFuture, mBgExecutor);
+            return Futures.transformAsync(stateTransitionFuture,
                     newState -> mPolicyController.enforceCurrentPolicies(), mBgExecutor);
         }
     }
 
     @Override
-    public void initState() {
-        Futures.addCallback(
-                Futures.transformAsync(GlobalParametersClient.getInstance().isProvisionReady(),
-                        isReady -> {
-                            if (isReady) {
-                                return setNextStateForEvent(PROVISION_READY);
-                            } else {
-                                return Futures.immediateVoidFuture();
-                            }
-                        },
-                        mBgExecutor),
-                getFutureCallback("Init provision state on first boot"),
-                MoreExecutors.directExecutor());
+    public void notifyProvisioningReady() {
+        if (isUserSetupComplete()) {
+            postSetNextStateForEventRequest(PROVISION_READY);
+        } else {
+            registerUserSetupCompleteListener(
+                    () -> postSetNextStateForEventRequest(PROVISION_READY));
+        }
     }
 
     @NonNull
@@ -153,18 +160,10 @@ public final class ProvisionStateControllerImpl implements ProvisionStateControl
     }
 
     private void handleNewState(@ProvisionState int state) {
-        if (state == PROVISION_SUCCEEDED) {
-            ReportDeviceProvisionStateWorker.reportSetupCompleted(
-                    WorkManager.getInstance(mContext));
-        } else if (state == PROVISION_FAILED) {
-            ReportDeviceProvisionStateWorker.reportSetupFailed(
-                    WorkManager.getInstance(mContext));
-        } else if (state == PROVISION_IN_PROGRESS) {
+        if (state == PROVISION_IN_PROGRESS) {
             mContext.getPackageManager().setComponentEnabledSetting(
                     new ComponentName(mContext, LockedBootCompletedReceiver.class),
                     PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP);
-        } else if (state == PROVISION_PAUSED) {
-            LogUtil.i(TAG, "Successfully handled new state");
         }
     }
 
@@ -222,7 +221,49 @@ public final class ProvisionStateControllerImpl implements ProvisionStateControl
         return mPolicyController;
     }
 
-    /** A RuntimeException thrown when state transition is  not allowed */
+    @Override
+    public ListenableFuture<Void> onUserUnlocked() {
+        GlobalParametersClient globalParametersClient = GlobalParametersClient.getInstance();
+        return Futures.transformAsync(getState(),
+                state -> {
+                    if (state == UNPROVISIONED) {
+                        return Futures.transformAsync(globalParametersClient.isProvisionReady(),
+                                isReady -> {
+                                    if (isReady) {
+                                        notifyProvisioningReady();
+                                    }
+                                    return Futures.immediateVoidFuture();
+                                },
+                                mBgExecutor);
+                    } else {
+                        return mPolicyController.enforceCurrentPolicies();
+                    }
+                },
+                mBgExecutor);
+    }
+
+    private void registerUserSetupCompleteListener(Runnable listener) {
+        Uri setupCompleteUri = Settings.Secure.getUriFor(Settings.Secure.USER_SETUP_COMPLETE);
+        mContext.getContentResolver().registerContentObserver(setupCompleteUri,
+                false /* notifyForDescendants */, new ContentObserver(null /* handler */) {
+                    @Override
+                    public void onChange(boolean selfChange, @Nullable Uri uri) {
+                        if (setupCompleteUri.equals(uri) && isUserSetupComplete()) {
+                            mContext.getContentResolver().unregisterContentObserver(this);
+                            listener.run();
+                        }
+                    }
+                });
+    }
+
+    private boolean isUserSetupComplete() {
+        return Settings.Secure.getInt(
+                mContext.getContentResolver(), Settings.Secure.USER_SETUP_COMPLETE, 0) != 0;
+    }
+
+    /**
+     * A RuntimeException thrown when state transition is  not allowed
+     */
     public static class StateTransitionException extends RuntimeException {
         public StateTransitionException(@ProvisionState int currentState,
                 @ProvisionEvent int event) {

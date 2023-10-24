@@ -16,25 +16,22 @@
 
 package com.android.devicelockcontroller.receivers;
 
-import static com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionState.UNPROVISIONED;
-
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.UserManager;
 
 import androidx.annotation.VisibleForTesting;
 
-import com.android.devicelockcontroller.AbstractDeviceLockControllerScheduler;
-import com.android.devicelockcontroller.DeviceLockControllerScheduler;
-import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
-import com.android.devicelockcontroller.policy.ProvisionStateController;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerScheduler;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerProvider;
+import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.UserParameters;
 import com.android.devicelockcontroller.util.LogUtil;
 
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -42,11 +39,12 @@ import java.util.concurrent.Executors;
 /**
  * Boot completed broadcast receiver to enqueue the check-in work for provision when device boots
  * for the first time.
+ *
+ * Only runs on system user and is disabled after check-in completes successfully.
  */
 public final class CheckInBootCompletedReceiver extends BroadcastReceiver {
 
     private static final String TAG = "CheckInBootCompletedReceiver";
-    private AbstractDeviceLockControllerScheduler mScheduler;
     private final Executor mExecutor;
 
     public CheckInBootCompletedReceiver() {
@@ -54,9 +52,7 @@ public final class CheckInBootCompletedReceiver extends BroadcastReceiver {
     }
 
     @VisibleForTesting
-    CheckInBootCompletedReceiver(AbstractDeviceLockControllerScheduler scheduler,
-            Executor executor) {
-        mScheduler = scheduler;
+    CheckInBootCompletedReceiver(Executor executor) {
         mExecutor = executor;
     }
 
@@ -66,27 +62,25 @@ public final class CheckInBootCompletedReceiver extends BroadcastReceiver {
 
         LogUtil.i(TAG, "Received boot completed intent");
 
-        final boolean isUserProfile =
-                context.getSystemService(UserManager.class).isProfile();
-
-        if (isUserProfile) {
-            return;
+        if (!context.getUser().isSystem()) {
+            throw new IllegalStateException(
+                    "This receiver should not run on anything besides the system user");
         }
-
-        if (mScheduler == null) mScheduler = new DeviceLockControllerScheduler(context);
-        ProvisionStateController provisionStateController =
-                ((PolicyObjectsInterface) context.getApplicationContext())
-                        .getProvisionStateController();
+        Context applicationContext = context.getApplicationContext();
+        DeviceLockControllerSchedulerProvider schedulerProvider =
+                (DeviceLockControllerSchedulerProvider) applicationContext;
+        DeviceLockControllerScheduler scheduler =
+                schedulerProvider.getDeviceLockControllerScheduler();
         ListenableFuture<Boolean> needReschedule = Futures.transformAsync(
                 Futures.submit(() -> UserParameters.needInitialCheckIn(context), mExecutor),
                 needCheckIn -> {
                     if (needCheckIn) {
-                        mScheduler.scheduleInitialCheckInWork();
+                        scheduler.scheduleInitialCheckInWork();
                         return Futures.immediateFuture(false);
                     } else {
                         return Futures.transform(
-                                provisionStateController.getState(),
-                                state -> state == UNPROVISIONED, mExecutor);
+                                GlobalParametersClient.getInstance().isProvisionReady(),
+                                ready -> !ready, MoreExecutors.directExecutor());
                     }
                 }, mExecutor);
         Futures.addCallback(needReschedule,
@@ -94,7 +88,7 @@ public final class CheckInBootCompletedReceiver extends BroadcastReceiver {
                     @Override
                     public void onSuccess(Boolean result) {
                         if (result) {
-                            mScheduler.rescheduleRetryCheckInWorkIfNeeded();
+                            scheduler.notifyNeedRescheduleCheckIn();
                         }
                     }
 

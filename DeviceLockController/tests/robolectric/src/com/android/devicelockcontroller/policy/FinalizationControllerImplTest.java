@@ -16,16 +16,15 @@
 
 package com.android.devicelockcontroller.policy;
 
+import static com.android.devicelockcontroller.policy.FinalizationControllerImpl.FinalizationState.FINALIZED;
+import static com.android.devicelockcontroller.policy.FinalizationControllerImpl.FinalizationState.FINALIZED_UNREPORTED;
 import static com.android.devicelockcontroller.provision.worker.ReportDeviceLockProgramCompleteWorker.REPORT_DEVICE_LOCK_PROGRAM_COMPLETE_WORK_NAME;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import static org.robolectric.Shadows.shadowOf;
-
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.os.Looper;
+import android.os.OutcomeReceiver;
 
 import androidx.annotation.NonNull;
 import androidx.test.core.app.ApplicationProvider;
@@ -35,11 +34,13 @@ import androidx.work.WorkManager;
 import androidx.work.WorkerParameters;
 import androidx.work.testing.WorkManagerTestInitHelper;
 
-import com.android.devicelockcontroller.receivers.LockedBootCompletedReceiver;
+import com.android.devicelockcontroller.SystemDeviceLockManager;
+import com.android.devicelockcontroller.provision.grpc.DeviceFinalizeClient.ReportDeviceProgramCompleteResponse;
+import com.android.devicelockcontroller.storage.GlobalParametersClient;
 
+import com.google.common.util.concurrent.ExecutionSequencer;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -47,7 +48,6 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -57,59 +57,132 @@ public final class FinalizationControllerImplTest {
 
     private static final int TIMEOUT_MS = 1000;
 
+    private SystemDeviceLockManager mSystemDeviceLockManager = new TestSystemDeviceLockManager();
     private Context mContext;
     private FinalizationControllerImpl mFinalizationController;
     private FinalizationStateDispatchQueue mDispatchQueue;
-    private Executor mSequentialExecutor =
-            MoreExecutors.newSequentialExecutor(Executors.newSingleThreadExecutor());
-    private Executor mLightweightExecutor = Executors.newCachedThreadPool();
+    private ExecutionSequencer mExecutionSequencer = ExecutionSequencer.create();
+    private Executor mBgExecutor = Executors.newCachedThreadPool();
+    private GlobalParametersClient mGlobalParametersClient;
 
     @Before
     public void setUp() {
         mContext = ApplicationProvider.getApplicationContext();
         WorkManagerTestInitHelper.initializeTestWorkManager(mContext);
 
-        mDispatchQueue = new FinalizationStateDispatchQueue(mSequentialExecutor);
-        mFinalizationController = new FinalizationControllerImpl(
-                mContext, mDispatchQueue, mLightweightExecutor, TestWorker.class);
+        mGlobalParametersClient = GlobalParametersClient.getInstance();
+        mDispatchQueue = new FinalizationStateDispatchQueue(mExecutionSequencer);
     }
 
     @Test
     public void notifyRestrictionsCleared_startsReportingWork() throws Exception {
+        mFinalizationController = makeFinalizationController();
+
         // WHEN restrictions are cleared
         ListenableFuture<Void> clearedFuture =
                 mFinalizationController.notifyRestrictionsCleared();
         Futures.getChecked(clearedFuture, Exception.class, TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
-        // THEN work manager has work scheduled to report the device is finalized
+        // THEN work manager has work scheduled to report the device is finalized and the disk
+        // value is set to unreported
+        ListenableFuture<List<WorkInfo>> workInfosFuture = WorkManager.getInstance(mContext)
+                .getWorkInfosForUniqueWork(REPORT_DEVICE_LOCK_PROGRAM_COMPLETE_WORK_NAME);
+        List<WorkInfo> workInfos = Futures.getChecked(workInfosFuture, Exception.class);
+        assertThat(workInfos).isNotEmpty();
+        assertThat(mGlobalParametersClient.getFinalizationState().get())
+                .isEqualTo(FINALIZED_UNREPORTED);
+    }
+
+    @Test
+    public void reportingFinishedSuccessfully_disablesApplication() throws Exception {
+        mFinalizationController = makeFinalizationController();
+
+        // GIVEN the restrictions have been requested to clear
+        ListenableFuture<Void> clearedFuture =
+                mFinalizationController.notifyRestrictionsCleared();
+        Futures.getChecked(clearedFuture, Exception.class, TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+        // WHEN the work is reported successfully
+        ReportDeviceProgramCompleteResponse successResponse =
+                new ReportDeviceProgramCompleteResponse();
+        ListenableFuture<Void> reportedFuture =
+                mFinalizationController.notifyFinalizationReportResult(successResponse);
+        Futures.getChecked(reportedFuture, Exception.class, TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+        // THEN the application is disabled and the disk value is set to finalized
+        PackageManager pm = mContext.getPackageManager();
+        assertThat(pm.getApplicationEnabledSetting(mContext.getPackageName()))
+                .isEqualTo(PackageManager.COMPONENT_ENABLED_STATE_DISABLED);
+        assertThat(mGlobalParametersClient.getFinalizationState().get()).isEqualTo(FINALIZED);
+    }
+
+    @Test
+    public void unreportedStateInitializedFromDisk_reportsWork() throws Exception {
+        // GIVEN the state on disk is unreported
+        Futures.getChecked(
+                mGlobalParametersClient.setFinalizationState(FINALIZED_UNREPORTED),
+                Exception.class);
+
+        // WHEN the controller is initialized
+        mFinalizationController = makeFinalizationController();
+        Futures.getChecked(mFinalizationController.enforceInitialState(), Exception.class,
+                TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+        // THEN the state from disk is used and is applied immediately, reporting the work.
         ListenableFuture<List<WorkInfo>> workInfosFuture = WorkManager.getInstance(mContext)
                 .getWorkInfosForUniqueWork(REPORT_DEVICE_LOCK_PROGRAM_COMPLETE_WORK_NAME);
         List<WorkInfo> workInfos = Futures.getChecked(workInfosFuture, Exception.class);
         assertThat(workInfos).isNotEmpty();
     }
 
-    @Test
-    public void reportingFinished_disablesApplication() throws Exception {
-        // WHEN restrictions are cleared and the work is reported successfully
-        Futures.getChecked(mFinalizationController.notifyRestrictionsCleared(),
-                Exception.class, TIMEOUT_MS, TimeUnit.MILLISECONDS);
-        // Wait for all executors to finish
-        shadowOf(Looper.getMainLooper()).idle();
-        waitForAllExecution(mSequentialExecutor);
-        waitForAllExecution(mLightweightExecutor);
-
-        // THEN the application is disabled
-        PackageManager pm = mContext.getPackageManager();
-        assertThat(pm.getComponentEnabledSetting(
-                new ComponentName(mContext, LockedBootCompletedReceiver.class)))
-                .isEqualTo(PackageManager.COMPONENT_ENABLED_STATE_DISABLED);
-        // TODO(279517666): Assert checks that application itself is disabled when implemented
+    private FinalizationControllerImpl makeFinalizationController() {
+        return new FinalizationControllerImpl(
+                mContext, mDispatchQueue, mBgExecutor, TestWorker.class, mSystemDeviceLockManager);
     }
 
-    private static void waitForAllExecution(Executor executor) throws InterruptedException {
-        final CountDownLatch latch = new CountDownLatch(1);
-        executor.execute(() -> latch.countDown());
-        latch.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+    private static final class TestSystemDeviceLockManager implements SystemDeviceLockManager {
+
+        @Override
+        public void addFinancedDeviceKioskRole(@NonNull String packageName, Executor executor,
+                @NonNull OutcomeReceiver<Void, Exception> callback) {
+
+        }
+
+        @Override
+        public void removeFinancedDeviceKioskRole(@NonNull String packageName, Executor executor,
+                @NonNull OutcomeReceiver<Void, Exception> callback) {
+
+        }
+
+        @Override
+        public void setExemptFromActivityBackgroundStartRestriction(boolean exempt,
+                Executor executor, @NonNull OutcomeReceiver<Void, Exception> callback) {
+
+        }
+
+        @Override
+        public void setExemptFromHibernation(String packageName, boolean exempt, Executor executor,
+                @NonNull OutcomeReceiver<Void, Exception> callback) {
+
+        }
+
+        @Override
+        public void enableKioskKeepalive(String packageName, Executor executor,
+                @NonNull OutcomeReceiver<Void, Exception> callback) {
+
+        }
+
+        @Override
+        public void disableKioskKeepalive(Executor executor,
+                @NonNull OutcomeReceiver<Void, Exception> callback) {
+
+        }
+
+        @Override
+        public void setDeviceFinalized(boolean finalized, Executor executor,
+                @NonNull OutcomeReceiver<Void, Exception> callback) {
+            executor.execute(() -> callback.onResult(null));
+        }
     }
 
     /**

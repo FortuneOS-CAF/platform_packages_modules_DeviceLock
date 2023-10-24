@@ -157,7 +157,14 @@ public final class DeviceLockNotificationManager {
                 }, context.getMainExecutor());
     }
 
-    // Already requested POST_NOTIFICATION permission in ProvisionInfoFragment
+    /**
+     * Send the device deferred provisioning notification.
+     * (POST_NOTIFICATION already requested permission in ProvisionInfoFragment).
+     *
+     * @param context        the context where the notification will be sent out
+     * @param resumeDateTime the time when device will show the notification
+     * @Param pendingIntent  pending intent for the notification
+     */
     @SuppressLint("MissingPermission")
     public static void sendDeferredProvisioningNotification(Context context,
             LocalDateTime resumeDateTime, PendingIntent pendingIntent) {

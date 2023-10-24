@@ -35,11 +35,12 @@ import android.text.TextUtils;
 import androidx.annotation.StringDef;
 import androidx.work.WorkManager;
 
-import com.android.devicelockcontroller.DeviceLockControllerScheduler;
+import com.android.devicelockcontroller.FcmRegistrationTokenProvider;
 import com.android.devicelockcontroller.policy.DevicePolicyController;
 import com.android.devicelockcontroller.policy.DeviceStateController;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceState;
 import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
+import com.android.devicelockcontroller.policy.ProvisionStateController;
 import com.android.devicelockcontroller.provision.worker.DeviceCheckInWorker;
 import com.android.devicelockcontroller.provision.worker.PauseProvisioningWorker;
 import com.android.devicelockcontroller.provision.worker.ReportDeviceLockProgramCompleteWorker;
@@ -47,6 +48,8 @@ import com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionSt
 import com.android.devicelockcontroller.receivers.NextProvisionFailedStepReceiver;
 import com.android.devicelockcontroller.receivers.ResetDeviceReceiver;
 import com.android.devicelockcontroller.receivers.ResumeProvisionReceiver;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerScheduler;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerProvider;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
 import com.android.devicelockcontroller.storage.UserParameters;
@@ -80,6 +83,7 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             Commands.CHECK_IN,
             Commands.CLEAR,
             Commands.DUMP,
+            Commands.FCM,
     })
     private @interface Commands {
         String RESET = "reset";
@@ -88,6 +92,7 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         String CHECK_IN = "check-in";
         String CLEAR = "clear";
         String DUMP = "dump";
+        String FCM = "fcm";
     }
 
     @Override
@@ -109,8 +114,10 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
 
         Context appContext = context.getApplicationContext();
 
+        ProvisionStateController provisionStateController =
+                ((PolicyObjectsInterface) appContext).getProvisionStateController();
         DeviceStateController deviceStateController =
-                ((PolicyObjectsInterface) appContext).getDeviceStateController();
+                provisionStateController.getDeviceStateController();
 
         @Commands
         String command = String.valueOf(intent.getStringExtra(EXTRA_COMMAND));
@@ -135,6 +142,9 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
                 break;
             case Commands.DUMP:
                 dumpStorage(context);
+                break;
+            case Commands.FCM:
+                logFcmToken(appContext);
                 break;
             default:
                 throw new IllegalArgumentException("Unsupported command: " + command);
@@ -165,25 +175,28 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             LogUtil.e(TAG, "Only system user can perform a check-in");
             return;
         }
+        DeviceLockControllerSchedulerProvider schedulerProvider =
+                (DeviceLockControllerSchedulerProvider) appContext;
+        DeviceLockControllerScheduler scheduler =
+                schedulerProvider.getDeviceLockControllerScheduler();
 
-        Futures.addCallback(GlobalParametersClient.getInstance().needCheckIn(),
+        Futures.addCallback(GlobalParametersClient.getInstance().isProvisionReady(),
                 new FutureCallback<>() {
                     @Override
-                    public void onSuccess(Boolean needCheckIn) {
-                        if (needCheckIn) {
-                            new DeviceLockControllerScheduler(
-                                    appContext).scheduleInitialCheckInWork();
+                    public void onSuccess(Boolean provisioningInfoReady) {
+                        if (!provisioningInfoReady) {
+                            scheduler.scheduleInitialCheckInWork();
                         } else {
                             LogUtil.e(TAG,
-                                    "Can not check in at current state!\n"
-                                            + "Use reset command to reset DLC first.");
+                                    "Can not check in when provisioning info has already been "
+                                            + "received. Use the \"reset\" command to reset "
+                                            + "DLC first.");
                         }
                     }
 
                     @Override
                     public void onFailure(Throwable t) {
-                        LogUtil.e(TAG, "Failed to know if we need to perform check-in!",
-                                t);
+                        LogUtil.e(TAG, "Failed to determine if provisioning info is ready", t);
                     }
                 }, MoreExecutors.directExecutor());
     }
@@ -239,6 +252,22 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
                         throw new RuntimeException(t);
                     }
                 }, MoreExecutors.directExecutor());
+    }
+
+    private static void logFcmToken(Context appContext) {
+        final ListenableFuture<String> fcmRegistrationToken =
+                ((FcmRegistrationTokenProvider) appContext).getFcmRegistrationToken();
+        Futures.addCallback(fcmRegistrationToken, new FutureCallback<>() {
+            @Override
+            public void onSuccess(String token) {
+                LogUtil.i(TAG, "FCM Registration Token: " + (token == null ? "Not set" : token));
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                LogUtil.e(TAG, "Unable to get FCM registration token", t);
+            }
+        }, MoreExecutors.directExecutor());
     }
 
     private static FutureCallback<Void> getSetStateCallBack(@DeviceState int state) {

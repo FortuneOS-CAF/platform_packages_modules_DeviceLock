@@ -16,6 +16,8 @@
 
 package com.android.devicelockcontroller.storage;
 
+import static com.android.devicelockcontroller.policy.FinalizationControllerImpl.FinalizationState.FINALIZED;
+
 import static com.google.common.truth.Truth.assertThat;
 
 import android.content.Context;
@@ -34,15 +36,6 @@ public final class GlobalParametersTest extends AbstractGlobalParametersTestBase
     @Before
     public void setup() {
         mContext = ApplicationProvider.getApplicationContext();
-    }
-
-    @Test
-    public void needCheckIn_shouldReturnExpectedResult() {
-        assertThat(GlobalParameters.needCheckIn(mContext)).isNotEqualTo(NEED_CHECK_IN);
-
-        GlobalParameters.setNeedCheckIn(mContext, NEED_CHECK_IN);
-
-        assertThat(GlobalParameters.needCheckIn(mContext)).isEqualTo(NEED_CHECK_IN);
     }
 
     @Test
@@ -73,5 +66,14 @@ public final class GlobalParametersTest extends AbstractGlobalParametersTestBase
 
         assertThat(GlobalParameters.getLastReceivedProvisionState(mContext)).isEqualTo(
                 LAST_RECEIVED_PROVISION_STATE);
+    }
+
+    @Test
+    public void getFinalizationState_shouldReturnExpectedResult() {
+        assertThat(GlobalParameters.getFinalizationState(mContext)).isNotEqualTo(FINALIZED);
+
+        GlobalParameters.setFinalizationState(mContext, FINALIZED);
+
+        assertThat(GlobalParameters.getFinalizationState(mContext)).isEqualTo(FINALIZED);
     }
 }

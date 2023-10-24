@@ -17,26 +17,16 @@
 package com.android.devicelockcontroller.receivers;
 
 import android.content.BroadcastReceiver;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.os.SystemClock;
 import android.os.UserManager;
 
 import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
-import com.android.devicelockcontroller.policy.ProvisionStateController;
-import com.android.devicelockcontroller.storage.UserParameters;
-
-import java.time.Clock;
-import java.time.Instant;
 
 /**
- * Boot completed broadcast receiver to initialize the user. This broadcast receiver
- * runs for every user on the device.
- * Note that this receiver will disable itself after the initial run.
+ * Boot complete receiver to initialize finalization state on device.
  */
-public final class BootCompletedReceiver extends BroadcastReceiver {
+public final class FinalizationBootCompletedReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -46,20 +36,12 @@ public final class BootCompletedReceiver extends BroadcastReceiver {
                 context.getSystemService(UserManager.class).isProfile();
 
         if (isUserProfile) {
+            // Not needed as the receiver will run in the parent user
             return;
         }
 
-
-        Instant bootTimeStamp = Instant.now(Clock.systemUTC()).minusMillis(
-                SystemClock.elapsedRealtime());
-        UserParameters.setBootTimeMillis(context, bootTimeStamp.toEpochMilli());
-
-        ProvisionStateController userStateController =
-                ((PolicyObjectsInterface) context.getApplicationContext())
-                        .getProvisionStateController();
-        userStateController.initState();
-        context.getPackageManager().setComponentEnabledSetting(
-                new ComponentName(context, this.getClass()),
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
+        // Initialize finalization controller to apply device finalization state
+        ((PolicyObjectsInterface) context.getApplicationContext())
+                .getFinalizationController().enforceInitialState();
     }
 }

@@ -22,6 +22,7 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -38,7 +39,6 @@ import androidx.work.testing.SynchronousExecutor;
 import androidx.work.testing.TestListenableWorkerBuilder;
 import androidx.work.testing.WorkManagerTestInitHelper;
 
-import com.android.devicelockcontroller.AbstractDeviceLockControllerScheduler;
 import com.android.devicelockcontroller.TestDeviceLockControllerApplication;
 import com.android.devicelockcontroller.provision.grpc.DeviceCheckInClient;
 import com.android.devicelockcontroller.provision.grpc.ReportDeviceProvisionStateGrpcResponse;
@@ -46,7 +46,7 @@ import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.UserParameters;
 
 import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.testing.TestingExecutors;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -57,6 +57,8 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.RobolectricTestRunner;
 
+import java.util.concurrent.Executors;
+
 @RunWith(RobolectricTestRunner.class)
 public final class ReportDeviceProvisionStateWorkerTest {
     private static final int TEST_DAYS_LEFT_UNTIL_RESET = 3;
@@ -66,8 +68,6 @@ public final class ReportDeviceProvisionStateWorkerTest {
     private DeviceCheckInClient mClient;
     @Mock
     private ReportDeviceProvisionStateGrpcResponse mResponse;
-    @Mock
-    private AbstractDeviceLockControllerScheduler mScheduler;
     private ReportDeviceProvisionStateWorker mWorker;
     private TestDeviceLockControllerApplication mTestApp;
 
@@ -80,7 +80,8 @@ public final class ReportDeviceProvisionStateWorkerTest {
                         .setExecutor(new SynchronousExecutor())
                         .build());
 
-        when(mClient.reportDeviceProvisionState(anyInt(), anyBoolean())).thenReturn(mResponse);
+        when(mClient.reportDeviceProvisionState(anyInt(), anyBoolean(), anyInt())).thenReturn(
+                mResponse);
         mWorker = TestListenableWorkerBuilder.from(
                         mTestApp, ReportDeviceProvisionStateWorker.class)
                 .setWorkerFactory(
@@ -93,7 +94,8 @@ public final class ReportDeviceProvisionStateWorkerTest {
                                         ReportDeviceProvisionStateWorker.class.getName())
                                         ? new ReportDeviceProvisionStateWorker(context,
                                         workerParameters, mClient,
-                                        TestingExecutors.sameThreadScheduledExecutor(), mScheduler)
+                                        MoreExecutors.listeningDecorator(
+                                                Executors.newSingleThreadExecutor()))
                                         : null;
                             }
                         }).build();
@@ -111,6 +113,8 @@ public final class ReportDeviceProvisionStateWorkerTest {
         when(mResponse.hasFatalError()).thenReturn(true);
 
         assertThat(Futures.getUnchecked(mWorker.startWork())).isEqualTo(Result.failure());
+        verify(mTestApp.getDeviceLockControllerScheduler()).scheduleNextProvisionFailedStepAlarm(
+                /* shouldGoOffImmediately= */ eq(false));
     }
 
     @Test
@@ -125,9 +129,11 @@ public final class ReportDeviceProvisionStateWorkerTest {
         GlobalParametersClient globalParameters = GlobalParametersClient.getInstance();
         assertThat(globalParameters.getLastReceivedProvisionState().get()).isEqualTo(
                 PROVISION_STATE_FACTORY_RESET);
-        assertThat(UserParameters.getDaysLeftUntilReset(mTestApp)).isEqualTo(
-                TEST_DAYS_LEFT_UNTIL_RESET);
+        Executors.newSingleThreadExecutor().submit(
+                () -> assertThat(UserParameters.getDaysLeftUntilReset(mTestApp)).isEqualTo(
+                        TEST_DAYS_LEFT_UNTIL_RESET)).get();
 
-        verify(mScheduler).scheduleNextProvisionFailedStepAlarm();
+        verify(mTestApp.getDeviceLockControllerScheduler()).scheduleNextProvisionFailedStepAlarm(
+                /* shouldGoOffImmediately= */ eq(true));
     }
 }

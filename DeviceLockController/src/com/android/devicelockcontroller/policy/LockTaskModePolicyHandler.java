@@ -26,6 +26,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.os.UserManager;
 import android.provider.Settings;
 import android.provider.Settings.Secure;
 import android.telecom.TelecomManager;
@@ -44,6 +45,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.Executor;
 
 /** Handles lock task mode features. */
@@ -59,11 +61,13 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
     private final Context mContext;
     private final DevicePolicyManager mDpm;
     private final Executor mBgExecutor;
+    private UserManager mUserManager;
 
     LockTaskModePolicyHandler(Context context, DevicePolicyManager dpm, Executor bgExecutor) {
         mContext = context;
         mDpm = dpm;
         mBgExecutor = bgExecutor;
+        mUserManager = Objects.requireNonNull(mContext.getSystemService(UserManager.class));
     }
 
     @Override
@@ -165,8 +169,9 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
 
     private ListenableFuture<Boolean> disableLockTaskMode() {
         return Futures.submit(() -> {
-            WorkManager.getInstance(mContext).cancelUniqueWork(START_LOCK_TASK_MODE_WORK_NAME);
-
+            if (mUserManager.isUserUnlocked()) {
+                WorkManager.getInstance(mContext).cancelUniqueWork(START_LOCK_TASK_MODE_WORK_NAME);
+            }
             final String currentPackage = UserParameters.getPackageOverridingHome(mContext);
             // Device Policy Engine treats lock task features and packages as one policy and
             // therefore we need to set both lock task features (to LOCK_TASK_FEATURE_NONE) and
@@ -192,9 +197,10 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
      *      required for essential services to work.
      *   2. Find the default app used as dialer (should be a System App).
      *   3. Find the default app used for Settings (should be a System App).
-     *   4. Find the default InputMethod.
-     *   5. DLC or Kiosk app depending on the input.
-     *   6. Append the packages allow-listed through setup parameters if applicable.
+     *   4. Find the default app used for permissions (should be a System App).
+     *   5. Find the default InputMethod.
+     *   6. DLC or Kiosk app depending on the input.
+     *   7. Append the packages allow-listed through setup parameters if applicable.
      */
     private ListenableFuture<ArraySet<String>> composeAllowlist(boolean includeController) {
         return Futures.submit(() -> {
@@ -203,6 +209,8 @@ final class LockTaskModePolicyHandler implements PolicyHandler {
             ArraySet<String> allowlistPackages = new ArraySet<>(allowlistArray);
             allowlistSystemAppForAction(Intent.ACTION_DIAL, allowlistPackages);
             allowlistSystemAppForAction(Settings.ACTION_SETTINGS, allowlistPackages);
+            allowlistSystemAppForAction(PackageManager.ACTION_REQUEST_PERMISSIONS,
+                    allowlistPackages);
             allowlistInputMethod(allowlistPackages);
             allowlistCellBroadcastReceiver(allowlistPackages);
             if (includeController) {

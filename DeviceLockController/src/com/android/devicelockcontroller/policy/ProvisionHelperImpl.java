@@ -22,6 +22,7 @@ import static androidx.work.WorkInfo.State.SUCCEEDED;
 import static com.android.devicelockcontroller.common.DeviceLockConstants.EXTRA_KIOSK_PACKAGE;
 import static com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionEvent.PROVISION_KIOSK;
 import static com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionEvent.PROVISION_PAUSE;
+import static com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionStateWorker.KEY_PROVISION_FAILURE_REASON;
 
 import android.app.PendingIntent;
 import android.content.Context;
@@ -29,23 +30,29 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.Build;
+import android.telephony.TelephonyManager;
 
 import androidx.annotation.NonNull;
 import androidx.lifecycle.LifecycleOwner;
+import androidx.work.Constraints;
 import androidx.work.Data;
-import androidx.work.ExistingWorkPolicy;
 import androidx.work.ListenableWorker;
+import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
 import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
 import com.android.devicelockcontroller.DeviceLockControllerApplication;
-import com.android.devicelockcontroller.DeviceLockControllerScheduler;
 import com.android.devicelockcontroller.activities.DeviceLockNotificationManager;
 import com.android.devicelockcontroller.activities.ProvisioningProgress;
 import com.android.devicelockcontroller.activities.ProvisioningProgressController;
+import com.android.devicelockcontroller.common.DeviceLockConstants.ProvisionFailureReason;
+import com.android.devicelockcontroller.provision.worker.IsDeviceInApprovedCountryWorker;
 import com.android.devicelockcontroller.provision.worker.PauseProvisioningWorker;
+import com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionStateWorker;
 import com.android.devicelockcontroller.receivers.ResumeProvisionReceiver;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerScheduler;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerProvider;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
 import com.android.devicelockcontroller.util.LogUtil;
@@ -54,6 +61,7 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -61,18 +69,19 @@ import java.util.concurrent.Executors;
  * An implementation of {@link ProvisionHelper}.
  */
 public final class ProvisionHelperImpl implements ProvisionHelper {
-
-    private static final String SETUP_PLAY_INSTALL_TASKS_NAME =
-            "devicelock_setup_play_install_tasks";
     private static final String TAG = "ProvisionHelperImpl";
 
     private final Context mContext;
     private final ProvisionStateController mStateController;
     private static final ExecutorService sExecutor = Executors.newCachedThreadPool();
+    private final DeviceLockControllerScheduler mScheduler;
 
     public ProvisionHelperImpl(Context context, ProvisionStateController stateController) {
         mContext = context;
         mStateController = stateController;
+        DeviceLockControllerSchedulerProvider schedulerProvider =
+                (DeviceLockControllerSchedulerProvider) mContext.getApplicationContext();
+        mScheduler = schedulerProvider.getDeviceLockControllerScheduler();
     }
 
     @Override
@@ -88,8 +97,7 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
                         createNotification();
                         WorkManager workManager = WorkManager.getInstance(mContext);
                         PauseProvisioningWorker.reportProvisionPausedByUser(workManager);
-                        new DeviceLockControllerScheduler(
-                                mContext).scheduleResumeProvisionAlarm();
+                        mScheduler.scheduleResumeProvisionAlarm();
                     }
 
                     @Override
@@ -134,45 +142,71 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
                         final Class<? extends ListenableWorker> playInstallTaskClass =
                                 ((DeviceLockControllerApplication) applicationContext)
                                         .getPlayInstallPackageTaskClass();
+                        WorkManager workManager = WorkManager.getInstance(mContext);
                         if (playInstallTaskClass == null) {
-                            onFailure(new Throwable("Play installation not supported!"));
+                            LogUtil.w(TAG, "Play installation not supported!");
+                            handleFailure(ProvisionFailureReason.PLAY_TASK_UNAVAILABLE);
+                            return;
                         }
-                        LogUtil.v(TAG, "Installing kiosk app from play");
+                        String carrierInfo = Objects.requireNonNull(
+                                applicationContext.getSystemService(
+                                        TelephonyManager.class)).getSimOperator();
+                        OneTimeWorkRequest isDeviceInApprovedCountryWork =
+                                getIsDeviceInApprovedCountryWork(carrierInfo);
+                        OneTimeWorkRequest playInstallPackageTask =
+                                getPlayInstallPackageTask(playInstallTaskClass, kioskPackage);
+                        workManager.beginWith(isDeviceInApprovedCountryWork).then(
+                                playInstallPackageTask).enqueue();
+                        mContext.getMainExecutor().execute(
+                                () -> workManager.getWorkInfoByIdLiveData(
+                                                playInstallPackageTask.getId())
+                                        .observe(owner, workInfo -> {
+                                            if (workInfo == null) return;
+                                            WorkInfo.State state = workInfo.getState();
+                                            LogUtil.d(TAG, "WorkInfo changed: " + workInfo);
+                                            if (state == SUCCEEDED) {
+                                                progressController.setProvisioningProgress(
+                                                        ProvisioningProgress.OPENING_KIOSK_APP);
+                                                ReportDeviceProvisionStateWorker
+                                                        .reportSetupCompleted(workManager);
+                                                mStateController.postSetNextStateForEventRequest(
+                                                        PROVISION_KIOSK);
+                                            } else if (state == FAILED) {
+                                                int reason = workInfo.getOutputData().getInt(
+                                                        KEY_PROVISION_FAILURE_REASON,
+                                                        ProvisionFailureReason.UNKNOWN_REASON);
+                                                LogUtil.w(TAG, "Play installation failed!");
+                                                handleFailure(reason);
+                                            }
+                                        }));
+                    }
 
-                        mContext.getMainExecutor().execute(() -> {
-                            final OneTimeWorkRequest playInstallPackageTask =
-                                    getPlayInstallPackageTask(playInstallTaskClass, kioskPackage);
-                            WorkManager workManager = WorkManager.getInstance(mContext);
-                            workManager.enqueueUniqueWork(
-                                    SETUP_PLAY_INSTALL_TASKS_NAME,
-                                    ExistingWorkPolicy.KEEP, playInstallPackageTask);
-                            workManager.getWorkInfoByIdLiveData(playInstallPackageTask.getId())
-                                    .observe(owner, workInfo -> {
-                                        if (workInfo == null) return;
-
-                                        WorkInfo.State state = workInfo.getState();
-                                        LogUtil.d(TAG, "WorkInfo changed: " + workInfo);
-                                        if (state == SUCCEEDED) {
-                                            progressController.setProvisioningProgress(
-                                                    ProvisioningProgress.OPENING_KIOSK_APP);
-                                            mStateController.postSetNextStateForEventRequest(
-                                                    PROVISION_KIOSK);
-                                        } else if (state == FAILED) {
-                                            onFailure(new RuntimeException(
-                                                    "Play install failed!"));
-                                        }
-                                    });
-                        });
+                    @NonNull
+                    private OneTimeWorkRequest getIsDeviceInApprovedCountryWork(
+                            String carrierInfo) {
+                        return new OneTimeWorkRequest.Builder(
+                                IsDeviceInApprovedCountryWorker.class)
+                                .setConstraints(
+                                        new Constraints.Builder().setRequiredNetworkType(
+                                                NetworkType.CONNECTED).build())
+                                .setInputData(new Data.Builder().putString(
+                                        IsDeviceInApprovedCountryWorker.KEY_CARRIER_INFO,
+                                        carrierInfo).build()).build();
                     }
 
                     @Override
                     public void onFailure(Throwable t) {
                         LogUtil.w(TAG, "Failed to install kiosk app!", t);
+                        handleFailure(ProvisionFailureReason.UNKNOWN_REASON);
+                    }
+
+                    private void handleFailure(@ProvisionFailureReason int reason) {
+                        ReportDeviceProvisionStateWorker.reportSetupFailed(
+                                WorkManager.getInstance(mContext), reason);
                         if (isMandatory) {
                             progressController.setProvisioningProgress(
                                     ProvisioningProgress.PROVISION_FAILED_MANDATORY);
-                            new DeviceLockControllerScheduler(
-                                    mContext).scheduleMandatoryResetDeviceAlarm();
+                            mScheduler.scheduleMandatoryResetDeviceAlarm();
                         } else {
                             progressController.setProvisioningProgress(
                                     ProvisioningProgress.PROVISIONING_FAILED);
@@ -184,10 +218,11 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
     @NonNull
     private static OneTimeWorkRequest getPlayInstallPackageTask(
             Class<? extends ListenableWorker> playInstallTaskClass, String kioskPackageName) {
-        return new OneTimeWorkRequest.Builder(
-                playInstallTaskClass).setInputData(
-                new Data.Builder().putString(
-                        EXTRA_KIOSK_PACKAGE, kioskPackageName).build()).build();
+        return new OneTimeWorkRequest.Builder(playInstallTaskClass)
+                .setInputData(new Data.Builder().putString(
+                        EXTRA_KIOSK_PACKAGE, kioskPackageName).build())
+                .setConstraints(new Constraints.Builder().setRequiredNetworkType(
+                        NetworkType.CONNECTED).build()).build();
     }
 
     private void createNotification() {

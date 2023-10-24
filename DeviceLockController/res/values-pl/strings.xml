@@ -48,9 +48,8 @@
     <string name="device_provided_by_provider" msgid="290593329676291991">"To urządzenie dostarcza organizacja <xliff:g id="PROVIDER_NAME">%1$s</xliff:g>"</string>
     <string name="download_kiosk_app" msgid="1845089944897502656">"Aplikacja Kiosk zostanie pobrana i zainstalowana automatycznie"</string>
     <string name="install_kiosk_app_secondary_user" msgid="49911908012320834">"Aplikacja Kiosk zostanie zainstalowana dla tego użytkownika"</string>
-    <string name="restrict_device_if_missing_payment" msgid="5721216628714899148">"<xliff:g id="PROVIDER_NAME">%1$s</xliff:g> może zablokować to urządzenie, jeśli nie uregulujesz płatności"</string>
+    <string name="restrict_device_if_missing_payment" msgid="2907880869705064855">"<xliff:g id="PROVIDER_NAME">%1$s</xliff:g> może ograniczyć dostęp tego urządzenia, jeśli nie uregulujesz płatności"</string>
     <string name="restrict_device_if_dont_make_payment" msgid="1619095674945507015">"<xliff:g id="PROVIDER_NAME">%1$s</xliff:g> może zablokować to urządzenie, jeśli nie dokonasz wymaganych płatności. Szczegółowe informacje znajdziesz w <xliff:g id="TERMS_AND_CONDITIONS_LINK_START">&lt;a href=%2$s&gt;</xliff:g>warunkach korzystania z usługi<xliff:g id="TERMS_AND_CONDITIONS_LINK_END">&lt;/a&gt;</xliff:g>."</string>
-    <string name="restrict_device_if_owner_doesnt_make_payment" msgid="3841412765931627895">"<xliff:g id="PROVIDER_NAME">%1$s</xliff:g> może zablokować to urządzenie, jeśli właściciel nie dokona płatności"</string>
     <string name="previous" msgid="5241891780917802570">"Wstecz"</string>
     <string name="next" msgid="8248291863254324326">"Dalej"</string>
     <string name="start" msgid="2842214844667658537">"Zarejestruj"</string>
@@ -81,7 +80,8 @@
     <string name="settings_banner_body" msgid="5814902066260202824">"<xliff:g id="PROVIDER_NAME">%1$s</xliff:g> może zmieniać ustawienia tego urządzenia"</string>
     <string name="settings_banner_button" msgid="1831020849782670907">"Więcej informacji"</string>
     <string name="settings_screen_title" msgid="721470080648091035">"Informacje o urządzeniu finansowanym"</string>
-    <string name="settings_intro" msgid="5809531331925309396">"Operator udzielający kredytu może zmieniać ustawienia i zainstalować na urządzeniu aplikację Kiosk.\n\n<xliff:g id="PROVIDER_NAME_0">%1$s</xliff:g> może zablokować to urządzenie, jeśli nie dokonasz wymaganych płatności lub przestaniesz korzystać z karty SIM <xliff:g id="PROVIDER_NAME_1">%1$s</xliff:g>.\n\nAby dowiedzieć się więcej, skontaktuj się z <xliff:g id="PROVIDER_NAME_2">%1$s</xliff:g>."</string>
+    <string name="settings_intro_device_financing" msgid="2548476558131048133">"<xliff:g id="PROVIDER_NAME_0">%1$s</xliff:g> może zmienić ustawienia i zainstalować aplikację kiosku na urządzeniu.\n\nJeśli nie dokonasz płatności, <xliff:g id="PROVIDER_NAME_1">%1$s</xliff:g> może nałożyć ograniczenia na Twoje urządzenie.\n\nAby dowiedzieć się więcej, skontaktuj się z <xliff:g id="PROVIDER_NAME_2">%1$s</xliff:g>."</string>
+    <string name="settings_intro_device_subsidy" msgid="4274945644204818702">"<xliff:g id="PROVIDER_NAME_0">%1$s</xliff:g> może zmienić ustawienia i zainstalować aplikację kiosku na urządzeniu.\n\n<xliff:g id="PROVIDER_NAME_1">%1$s</xliff:g> może także nałożyć ograniczenia na to urządzenie, jeśli nie dokonasz płatności lub przestaniesz używać karty SIM <xliff:g id="PROVIDER_NAME_2">%1$s</xliff:g>.\n\nAby dowiedzieć się więcej, skontaktuj się z <xliff:g id="PROVIDER_NAME_3">%1$s</xliff:g>."</string>
     <string name="settings_intro_preference_key" msgid="6610461073400554162">"settings_intro_preference_key"</string>
     <string name="settings_restrictions_category" msgid="5746868117342406677">"Dopóki nie zapłacisz za swoje urządzenie, nie możesz:"</string>
     <string name="settings_restrictions_category_preference_key" msgid="88318147152676512">"settings_restrictions_category_preference_key"</string>
@@ -89,8 +89,6 @@
     <string name="settings_install_apps_preference_key" msgid="27542314345238427">"settings_install_apps_preference_key"</string>
     <string name="settings_safe_mode" msgid="3035228015586375153">"Ponowne uruchamianie urządzenia w trybie awaryjnym"</string>
     <string name="settings_safe_mode_preference_key" msgid="2106617747358027424">"settings_safe_mode_preference_key"</string>
-    <string name="settings_config_date_time" msgid="3406612829802458778">"Zmiana daty, godziny i strefy czasowej"</string>
-    <string name="settings_config_date_time_preference_key" msgid="1838160765185598823">"settings_config_date_time_preference_key"</string>
     <string name="settings_developer_options" msgid="880701002025216672">"Korzystanie z opcji dla programistów"</string>
     <string name="settings_developer_options_preference_key" msgid="6807036808722582954">"settings_developer_options_preference_key"</string>
     <string name="settings_credit_provider_capabilities_category" msgid="1274440595211820868">"W razie problemów z urządzeniem, <xliff:g id="PROVIDER_NAME">%1$s</xliff:g> może:"</string>

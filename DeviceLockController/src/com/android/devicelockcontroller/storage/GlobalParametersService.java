@@ -23,6 +23,7 @@ import android.os.IBinder;
 
 import com.android.devicelockcontroller.common.DeviceLockConstants.DeviceProvisionState;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceState;
+import com.android.devicelockcontroller.policy.FinalizationControllerImpl.FinalizationState;
 import com.android.devicelockcontroller.util.LogUtil;
 
 /**
@@ -43,16 +44,6 @@ public final class GlobalParametersService extends Service {
                 @Override
                 public void dump() {
                     GlobalParameters.dump(mContext);
-                }
-
-                @Override
-                public boolean needCheckIn() {
-                    return GlobalParameters.needCheckIn(mContext);
-                }
-
-                @Override
-                public void setNeedCheckIn(boolean needCheckIn) {
-                    GlobalParameters.setNeedCheckIn(mContext, needCheckIn);
                 }
 
                 @Override
@@ -93,6 +84,16 @@ public final class GlobalParametersService extends Service {
                 @Override
                 public void setDeviceState(@DeviceState int state) {
                     GlobalParameters.setDeviceState(mContext, state);
+                }
+
+                @Override
+                public @FinalizationState int getFinalizationState() {
+                    return GlobalParameters.getFinalizationState(mContext);
+                }
+
+                @Override
+                public void setFinalizationState(@FinalizationState int state) {
+                    GlobalParameters.setFinalizationState(mContext, state);
                 }
 
                 @Override
