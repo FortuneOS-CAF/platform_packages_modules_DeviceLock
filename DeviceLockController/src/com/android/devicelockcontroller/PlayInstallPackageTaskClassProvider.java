@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 The Android Open Source Project
+ * Copyright (C) 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,19 @@
  * limitations under the License.
  */
 
-package android.devicelock;
+package com.android.devicelockcontroller;
 
-import android.devicelock.ParcelableException;
+import androidx.annotation.Nullable;
+import androidx.work.ListenableWorker;
 
 /**
-  * Callback for a getActiveKioskAppPackagesAndRoles() request.
-  * {@hide}
-  */
-oneway interface IGetKioskAppsCallback {
-    void onKioskAppsReceived(in Map roleToPackage);
+ * Interface to provide the PlayInstallPackageTaskClass.
+ */
+public interface PlayInstallPackageTaskClassProvider {
 
-    void onError(in ParcelableException parcelableException);
+    /**
+     * Returns PlayInstallPackageTaskClass.
+     */
+    @Nullable
+    Class<? extends ListenableWorker> getPlayInstallPackageTaskClass();
 }
