@@ -22,11 +22,13 @@ import static androidx.work.WorkInfo.State.SUCCEEDED;
 import static com.android.devicelockcontroller.common.DeviceLockConstants.EXTRA_KIOSK_PACKAGE;
 import static com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionEvent.PROVISION_KIOSK;
 import static com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionEvent.PROVISION_PAUSE;
+import static com.android.devicelockcontroller.provision.worker.IsDeviceInApprovedCountryWorker.BACKOFF_DELAY;
 import static com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionStateWorker.KEY_PROVISION_FAILURE_REASON;
 
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.Build;
@@ -35,6 +37,7 @@ import android.telephony.TelephonyManager;
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.lifecycle.LifecycleOwner;
+import androidx.work.BackoffPolicy;
 import androidx.work.Constraints;
 import androidx.work.Data;
 import androidx.work.ExistingWorkPolicy;
@@ -72,6 +75,19 @@ import java.util.concurrent.Executors;
  */
 public final class ProvisionHelperImpl implements ProvisionHelper {
     private static final String TAG = "ProvisionHelperImpl";
+    private static final String FILENAME = "device-lock-controller-provisioning-preferences";
+    private static final String USE_PREINSTALLED_KIOSK_PREF =
+            "debug.devicelock.usepreinstalledkiosk";
+    private static volatile SharedPreferences sSharedPreferences;
+    private static synchronized SharedPreferences getSharedPreferences(
+            Context context) {
+        if (sSharedPreferences == null) {
+            sSharedPreferences = context.createDeviceProtectedStorageContext().getSharedPreferences(
+                    FILENAME,
+                    Context.MODE_PRIVATE);
+        }
+        return sSharedPreferences;
+    }
     @VisibleForTesting
     static final String INSTALLATION_TASKS_NAME = "Installation Tasks";
 
@@ -130,7 +146,7 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
                     public void onSuccess(String kioskPackage) {
                         progressController.setProvisioningProgress(
                                 ProvisioningProgress.INSTALLING_KIOSK_APP);
-                        if (Build.isDebuggable()) {
+                        if (getPreinstalledKioskAllowed(mContext)) {
                             try {
                                 mContext.getPackageManager().getPackageInfo(
                                         kioskPackage,
@@ -225,6 +241,7 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
                 IsDeviceInApprovedCountryWorker.class)
                 .setConstraints(new Constraints.Builder().setRequiredNetworkType(
                         NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, BACKOFF_DELAY)
                 .setInputData(new Data.Builder().putString(
                         IsDeviceInApprovedCountryWorker.KEY_CARRIER_INFO,
                         carrierInfo).build()).build();
@@ -253,5 +270,23 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
         LocalDateTime resumeDateTime = LocalDateTime.now().plusHours(1);
         DeviceLockNotificationManager.sendDeferredProvisioningNotification(context, resumeDateTime,
                 pendingIntent);
+    }
+
+    /**
+     * Sets whether provisioning should skip play install if there is already a preinstalled kiosk
+     * app.
+     */
+    public static void setPreinstalledKioskAllowed(Context context, boolean enabled) {
+        getSharedPreferences(context).edit().putBoolean(USE_PREINSTALLED_KIOSK_PREF, enabled)
+                .apply();
+    }
+
+    /**
+     * Returns true if provisioning should skip play install if there is already a preinstalled
+     * kiosk app. By default, this returns true for debuggable build.
+     */
+    public static boolean getPreinstalledKioskAllowed(Context context) {
+        return getSharedPreferences(context).getBoolean(
+                USE_PREINSTALLED_KIOSK_PREF, Build.isDebuggable());
     }
 }
