@@ -34,6 +34,8 @@ import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
+import android.net.Uri;
 import android.os.SystemClock;
 import android.os.UserManager;
 import android.provider.Settings;
@@ -171,8 +173,6 @@ public final class ProvisionStateControllerImpl implements ProvisionStateControl
                                 // report critical error.
                                 synchronized (this) {
                                     mCurrentStateFuture = currentStateFuture;
-                                    LogUtil.e(TAG, "Enforcement failed so restoring previous state "
-                                            + currentStateFuture, ex);
                                 }
                                 return Futures.transformAsync(mPolicyController
                                                 .enforceCurrentPoliciesForCriticalFailure(),
