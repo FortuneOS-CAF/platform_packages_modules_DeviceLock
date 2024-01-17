@@ -16,10 +16,16 @@
 
 package com.android.devicelockcontroller.debug;
 
+import static com.android.devicelockcontroller.common.DeviceLockConstants.DeviceProvisionState.PROVISION_STATE_UNSPECIFIED;
+import static com.android.devicelockcontroller.common.DeviceLockConstants.MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE;
+import static com.android.devicelockcontroller.common.DeviceLockConstants.NON_MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE;
+import static com.android.devicelockcontroller.common.DeviceLockConstants.READY_FOR_PROVISION;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.CLEARED;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.LOCKED;
 import static com.android.devicelockcontroller.policy.DeviceStateController.DeviceState.UNLOCKED;
 import static com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionState.PROVISION_SUCCEEDED;
+import static com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerImpl.PROVISION_PAUSED_MINUTES_DEFAULT;
+import static com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerImpl.PROVISION_STATE_REPORT_INTERVAL_DEFAULT_MINUTES;
 
 import static java.lang.annotation.RetentionPolicy.SOURCE;
 
@@ -39,7 +45,8 @@ import com.android.devicelockcontroller.FcmRegistrationTokenProvider;
 import com.android.devicelockcontroller.policy.DevicePolicyController;
 import com.android.devicelockcontroller.policy.DeviceStateController;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceState;
-import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
+import com.android.devicelockcontroller.policy.PolicyObjectsProvider;
+import com.android.devicelockcontroller.policy.ProvisionHelperImpl;
 import com.android.devicelockcontroller.policy.ProvisionStateController;
 import com.android.devicelockcontroller.provision.worker.DeviceCheckInWorker;
 import com.android.devicelockcontroller.provision.worker.PauseProvisioningWorker;
@@ -49,6 +56,7 @@ import com.android.devicelockcontroller.receivers.NextProvisionFailedStepReceive
 import com.android.devicelockcontroller.receivers.ResetDeviceReceiver;
 import com.android.devicelockcontroller.receivers.ResumeProvisionReceiver;
 import com.android.devicelockcontroller.schedule.DeviceLockControllerScheduler;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerImpl;
 import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerProvider;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
@@ -74,6 +82,19 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
 
     private static final String TAG = "DeviceLockCommandReceiver";
     private static final String EXTRA_COMMAND = "command";
+    private static final String EXTRA_CHECK_IN_STATUS = "check-in-status";
+    private static final String EXTRA_CHECK_IN_RETRY_DELAY = "check-in-retry-delay";
+    private static final String EXTRA_FORCE_PROVISION = "force-provision";
+    private static final String EXTRA_IS_IN_APPROVED_COUNTRY = "is-in-approved-country";
+    private static final String EXTRA_NEXT_PROVISION_STATE = "next-provision-state";
+    private static final String EXTRA_DAYS_LEFT_UNTIL_RESET = "days-left-until-reset";
+    private static final String EXTRA_PAUSED_MINUTES = "paused-minutes";
+    private static final String EXTRA_REPORT_INTERVAL_MINUTES = "report-interval-minutes";
+    private static final String EXTRA_RESET_DEVICE_MINUTES = "reset-device-minutes";
+    private static final String EXTRA_MANDATORY_RESET_DEVICE_MINUTES =
+            "mandatory-reset-device-minutes";
+    public static final String EXTRA_RESET_INCLUDE_SETUP_PARAMETERS_AND_DEBUG_SETUPS =
+            "include-setup-params-and-debug-setups";
 
     @Retention(SOURCE)
     @StringDef({
@@ -84,6 +105,12 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             Commands.CLEAR,
             Commands.DUMP,
             Commands.FCM,
+            Commands.ENABLE_DEBUG_CLIENT,
+            Commands.DISABLE_DEBUG_CLIENT,
+            Commands.SET_DEBUG_CLIENT_RESPONSE,
+            Commands.DUMP_DEBUG_CLIENT_RESPONSE,
+            Commands.SET_DEBUG_CLIENT_RESPONSE,
+            Commands.DUMP_DEBUG_SCHEDULER,
     })
     private @interface Commands {
         String RESET = "reset";
@@ -93,6 +120,14 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         String CLEAR = "clear";
         String DUMP = "dump";
         String FCM = "fcm";
+        String ENABLE_DEBUG_CLIENT = "enable-debug-client";
+        String DISABLE_DEBUG_CLIENT = "disable-debug-client";
+        String SET_DEBUG_CLIENT_RESPONSE = "set-debug-client-response";
+        String DUMP_DEBUG_CLIENT_RESPONSE = "dump-debug-client-response";
+        String SET_UP_DEBUG_SCHEDULER = "set-up-debug-scheduler";
+        String DUMP_DEBUG_SCHEDULER = "dump-debug-scheduler";
+        String ENABLE_PREINSTALLED_KIOSK = "enable-preinstalled-kiosk";
+        String DISABLE_PREINSTALLED_KIOSK = "disable-preinstalled-kiosk";
     }
 
     @Override
@@ -115,7 +150,7 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         Context appContext = context.getApplicationContext();
 
         ProvisionStateController provisionStateController =
-                ((PolicyObjectsInterface) appContext).getProvisionStateController();
+                ((PolicyObjectsProvider) appContext).getProvisionStateController();
         DeviceStateController deviceStateController =
                 provisionStateController.getDeviceStateController();
 
@@ -123,7 +158,8 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         String command = String.valueOf(intent.getStringExtra(EXTRA_COMMAND));
         switch (command) {
             case Commands.RESET:
-                forceReset(appContext);
+                forceReset(appContext, intent.getBooleanExtra(
+                        EXTRA_RESET_INCLUDE_SETUP_PARAMETERS_AND_DEBUG_SETUPS, false));
                 break;
             case Commands.LOCK:
                 Futures.addCallback(deviceStateController.lockDevice(),
@@ -146,8 +182,83 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
             case Commands.FCM:
                 logFcmToken(appContext);
                 break;
+            case Commands.ENABLE_DEBUG_CLIENT:
+                DeviceCheckInClientDebug.setDebugClientEnabled(context, true);
+                break;
+            case Commands.DISABLE_DEBUG_CLIENT:
+                DeviceCheckInClientDebug.setDebugClientEnabled(context, false);
+                break;
+            case Commands.SET_DEBUG_CLIENT_RESPONSE:
+                setDebugCheckInClientResponse(context, intent);
+                break;
+            case Commands.DUMP_DEBUG_CLIENT_RESPONSE:
+                DeviceCheckInClientDebug.dumpDebugCheckInClientResponses(context);
+                break;
+            case Commands.SET_UP_DEBUG_SCHEDULER:
+                setUpDebugScheduler(context, intent);
+                break;
+            case Commands.DUMP_DEBUG_SCHEDULER:
+                DeviceLockControllerSchedulerImpl.dumpDebugScheduler(context);
+                break;
+            case Commands.ENABLE_PREINSTALLED_KIOSK:
+                ProvisionHelperImpl.setPreinstalledKioskAllowed(context, true);
+                break;
+            case Commands.DISABLE_PREINSTALLED_KIOSK:
+                ProvisionHelperImpl.setPreinstalledKioskAllowed(context, false);
+                break;
             default:
                 throw new IllegalArgumentException("Unsupported command: " + command);
+        }
+    }
+
+    private static void setDebugCheckInClientResponse(Context context, Intent intent) {
+        if (intent.hasExtra(EXTRA_CHECK_IN_STATUS)) {
+            DeviceCheckInClientDebug.setDebugCheckInStatus(context,
+                    intent.getIntExtra(EXTRA_CHECK_IN_STATUS, READY_FOR_PROVISION));
+
+        }
+        if (intent.hasExtra(EXTRA_FORCE_PROVISION)) {
+            DeviceCheckInClientDebug.setDebugForceProvisioning(context,
+                    intent.getBooleanExtra(EXTRA_FORCE_PROVISION, false));
+        }
+        if (intent.hasExtra(EXTRA_IS_IN_APPROVED_COUNTRY)) {
+            DeviceCheckInClientDebug.setDebugApprovedCountry(context,
+                    intent.getBooleanExtra(EXTRA_IS_IN_APPROVED_COUNTRY, true));
+        }
+        if (intent.hasExtra(EXTRA_NEXT_PROVISION_STATE)) {
+            DeviceCheckInClientDebug.setDebugNextProvisionState(context,
+                    intent.getIntExtra(EXTRA_NEXT_PROVISION_STATE,
+                            PROVISION_STATE_UNSPECIFIED));
+        }
+        if (intent.hasExtra(EXTRA_DAYS_LEFT_UNTIL_RESET)) {
+            DeviceCheckInClientDebug.setDebugDaysLeftUntilReset(
+                    context, intent.getIntExtra(EXTRA_DAYS_LEFT_UNTIL_RESET, /* days_left*/ 1));
+        }
+        if (intent.hasExtra(EXTRA_CHECK_IN_RETRY_DELAY)) {
+            DeviceCheckInClientDebug.setDebugCheckInRetryDelay(context,
+                    intent.getIntExtra(EXTRA_CHECK_IN_RETRY_DELAY, /* delay_minute= */ 1));
+        }
+    }
+
+    private static void setUpDebugScheduler(Context context, Intent intent) {
+        if (intent.hasExtra(EXTRA_PAUSED_MINUTES)) {
+            DeviceLockControllerSchedulerImpl.setDebugProvisionPausedMinutes(context,
+                    intent.getIntExtra(EXTRA_PAUSED_MINUTES, PROVISION_PAUSED_MINUTES_DEFAULT));
+        }
+        if (intent.hasExtra(EXTRA_REPORT_INTERVAL_MINUTES)) {
+            DeviceLockControllerSchedulerImpl.setDebugReportIntervalMinutes(context,
+                    intent.getLongExtra(EXTRA_REPORT_INTERVAL_MINUTES,
+                            PROVISION_STATE_REPORT_INTERVAL_DEFAULT_MINUTES));
+        }
+        if (intent.hasExtra(EXTRA_RESET_DEVICE_MINUTES)) {
+            DeviceLockControllerSchedulerImpl.setDebugResetDeviceMinutes(context,
+                    intent.getIntExtra(EXTRA_RESET_DEVICE_MINUTES,
+                            NON_MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE));
+        }
+        if (intent.hasExtra(EXTRA_MANDATORY_RESET_DEVICE_MINUTES)) {
+            DeviceLockControllerSchedulerImpl.setDebugMandatoryResetDeviceMinutes(context,
+                    intent.getIntExtra(EXTRA_MANDATORY_RESET_DEVICE_MINUTES,
+                            MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE));
         }
     }
 
@@ -201,7 +312,8 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
                 }, MoreExecutors.directExecutor());
     }
 
-    private static void forceReset(Context context) {
+    private static void forceReset(Context context,
+            boolean shouldCleanSetupParametersAndDebugSetups) {
         // Cancel provision works
         LogUtil.d(TAG, "cancelling works");
         WorkManager workManager = WorkManager.getInstance(context);
@@ -229,17 +341,18 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
                 new Intent(context, ResumeProvisionReceiver.class),
                 PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE));
 
-        PolicyObjectsInterface policyObjectsInterface =
-                (PolicyObjectsInterface) context.getApplicationContext();
-        policyObjectsInterface.destroyObjects();
+        PolicyObjectsProvider policyObjectsProvider =
+                (PolicyObjectsProvider) context.getApplicationContext();
+        policyObjectsProvider.destroyObjects();
         UserParameters.setProvisionState(context, PROVISION_SUCCEEDED);
         GlobalParametersClient.getInstance().setDeviceState(CLEARED);
-        DevicePolicyController policyController = policyObjectsInterface.getPolicyController();
+        DevicePolicyController policyController = policyObjectsProvider.getPolicyController();
         ListenableFuture<Void> clearPolicies = Futures.catching(
                 policyController.enforceCurrentPolicies(),
                 RuntimeException.class, unused -> null,
                 MoreExecutors.directExecutor());
-        Futures.addCallback(Futures.transformAsync(clearPolicies, unused -> clearStorage(context),
+        Futures.addCallback(Futures.transformAsync(clearPolicies,
+                        unused -> clearStorage(context, shouldCleanSetupParametersAndDebugSetups),
                         MoreExecutors.directExecutor()),
                 new FutureCallback<>() {
                     @Override
@@ -260,7 +373,8 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         Futures.addCallback(fcmRegistrationToken, new FutureCallback<>() {
             @Override
             public void onSuccess(String token) {
-                LogUtil.i(TAG, "FCM Registration Token: " + (token == null ? "Not set" : token));
+                LogUtil.i(TAG,
+                        "FCM Registration Token: " + (token == null ? "Not set" : token));
             }
 
             @Override
@@ -286,13 +400,20 @@ public final class DeviceLockCommandReceiver extends BroadcastReceiver {
         };
     }
 
-    private static ListenableFuture<Void> clearStorage(Context context) {
+    private static ListenableFuture<Void> clearStorage(Context context,
+            boolean shouldCleanSetupParametersAndDebugSetups) {
+        if (shouldCleanSetupParametersAndDebugSetups) {
+            DeviceCheckInClientDebug.clear(context);
+            DeviceLockControllerSchedulerImpl.clear(context);
+        }
         UserParameters.clear(context);
         return Futures.whenAllSucceed(
-                        SetupParametersClient.getInstance().clear(),
+                        shouldCleanSetupParametersAndDebugSetups
+                                ? SetupParametersClient.getInstance().clear()
+                                : Futures.immediateVoidFuture(),
                         GlobalParametersClient.getInstance().clear())
                 .call(() -> {
-                    ((PolicyObjectsInterface) context.getApplicationContext()).destroyObjects();
+                    ((PolicyObjectsProvider) context.getApplicationContext()).destroyObjects();
                     return null;
                 }, context.getMainExecutor());
     }

@@ -21,15 +21,17 @@ import static com.android.devicelockcontroller.common.DeviceLockConstants.NON_MA
 import static com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionState.PROVISION_FAILED;
 import static com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionState.PROVISION_PAUSED;
 import static com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionState.UNPROVISIONED;
+import static com.android.devicelockcontroller.provision.worker.AbstractCheckInWorker.BACKOFF_DELAY;
+import static com.android.devicelockcontroller.WorkManagerExceptionHandler.AlarmReason;
 
 import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.SystemClock;
-import android.os.SystemProperties;
 
 import androidx.annotation.VisibleForTesting;
 import androidx.work.BackoffPolicy;
@@ -37,10 +39,12 @@ import androidx.work.Constraints;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.Operation;
 import androidx.work.OutOfQuotaPolicy;
 import androidx.work.WorkManager;
 
 import com.android.devicelockcontroller.DeviceLockControllerApplication;
+import com.android.devicelockcontroller.WorkManagerExceptionHandler;
 import com.android.devicelockcontroller.activities.DeviceLockNotificationManager;
 import com.android.devicelockcontroller.policy.ProvisionStateController;
 import com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionState;
@@ -48,12 +52,16 @@ import com.android.devicelockcontroller.provision.worker.DeviceCheckInWorker;
 import com.android.devicelockcontroller.receivers.NextProvisionFailedStepReceiver;
 import com.android.devicelockcontroller.receivers.ResetDeviceReceiver;
 import com.android.devicelockcontroller.receivers.ResumeProvisionReceiver;
+import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.UserParameters;
 import com.android.devicelockcontroller.util.LogUtil;
 import com.android.devicelockcontroller.util.ThreadUtils;
 
+import com.google.common.base.Function;
+import com.google.common.util.concurrent.FluentFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import java.time.Clock;
@@ -70,22 +78,87 @@ import java.util.concurrent.TimeUnit;
  */
 public final class DeviceLockControllerSchedulerImpl implements DeviceLockControllerScheduler {
     private static final String TAG = "DeviceLockControllerSchedulerImpl";
+    private static final String FILENAME = "device-lock-controller-scheduler-preferences";
     public static final String DEVICE_CHECK_IN_WORK_NAME = "device-check-in";
-    private static final String PROVISION_PAUSED_MINUTES_SYS_PROPERTY_KEY =
-            "debug.devicelock.paused-minutes";
+    private static final String DEBUG_DEVICELOCK_PAUSED_MINUTES = "debug.devicelock.paused-minutes";
+    private static final String DEBUG_DEVICELOCK_REPORT_INTERVAL_MINUTES =
+            "debug.devicelock.report-interval-minutes";
+    private static final String DEBUG_DEVICELOCK_RESET_DEVICE_MINUTES =
+            "debug.devicelock.reset-device-minutes";
+    private static final String DEBUG_DEVICELOCK_MANDATORY_RESET_DEVICE_MINUTES =
+            "debug.devicelock.mandatory-reset-device-minutes";
+
     // The default minute value of the duration that provision UI can be paused.
-    @VisibleForTesting
-    static final int PROVISION_PAUSED_MINUTES_DEFAULT = 60;
+    public static final int PROVISION_PAUSED_MINUTES_DEFAULT = 60;
     // The default minute value of the interval between steps of provision failed flow.
-    @VisibleForTesting
-    static final long PROVISION_STATE_REPORT_INTERVAL_DEFAULT_MINUTES = TimeUnit.DAYS.toMinutes(1);
-    private static final String KEY_PROVISION_REPORT_INTERVAL_MINUTES =
-            "devicelock.provision.report-interval-minutes";
+    public static final long PROVISION_STATE_REPORT_INTERVAL_DEFAULT_MINUTES =
+            TimeUnit.DAYS.toMinutes(1);
     private final Context mContext;
-    private static final int CHECK_IN_INTERVAL_MINUTE = 60;
     private final Clock mClock;
     private final Executor mSequentialExecutor;
     private final ProvisionStateController mProvisionStateController;
+
+    private static volatile SharedPreferences sSharedPreferences;
+
+    private static synchronized SharedPreferences getSharedPreferences(
+            Context context) {
+        if (sSharedPreferences == null) {
+            sSharedPreferences = context.createDeviceProtectedStorageContext().getSharedPreferences(
+                    FILENAME,
+                    Context.MODE_PRIVATE);
+        }
+        return sSharedPreferences;
+    }
+
+    /**
+     * Set how long provision should be paused after user hit the "Do it in 1 hour" button, in
+     * minutes.
+     */
+    public static void setDebugProvisionPausedMinutes(Context context, int minutes) {
+        getSharedPreferences(context).edit().putInt(DEBUG_DEVICELOCK_PAUSED_MINUTES,
+                minutes).apply();
+    }
+
+    /**
+     * Set the length of the interval of provisioning failure reporting for debugging purpose.
+     */
+    public static void setDebugReportIntervalMinutes(Context context, long minutes) {
+        getSharedPreferences(context).edit().putLong(DEBUG_DEVICELOCK_REPORT_INTERVAL_MINUTES,
+                minutes).apply();
+    }
+
+    /**
+     * Set the length of the countdown minutes when device is about to factory reset in
+     * non-mandatory provisioning case for debugging purpose.
+     */
+    public static void setDebugResetDeviceMinutes(Context context, int minutes) {
+        getSharedPreferences(context).edit().putInt(DEBUG_DEVICELOCK_RESET_DEVICE_MINUTES,
+                minutes).apply();
+    }
+
+    /**
+     * Set the length of the countdown minutes when device is about to factory reset in mandatory
+     * provisioning case for debugging purpose.
+     */
+    public static void setDebugMandatoryResetDeviceMinutes(Context context, int minutes) {
+        getSharedPreferences(context).edit().putInt(DEBUG_DEVICELOCK_MANDATORY_RESET_DEVICE_MINUTES,
+                minutes).apply();
+    }
+
+    /**
+     * Dump current debugging setup to logcat.
+     */
+    public static void dumpDebugScheduler(Context context) {
+        LogUtil.d(TAG,
+                "Current Debug Scheduler setups:\n" + getSharedPreferences(context).getAll());
+    }
+
+    /**
+     * Clear current debugging setup.
+     */
+    public static void clear(Context context) {
+        getSharedPreferences(context).edit().clear().apply();
+    }
 
     public DeviceLockControllerSchedulerImpl(Context context,
             ProvisionStateController provisionStateController) {
@@ -167,7 +240,7 @@ public final class DeviceLockControllerSchedulerImpl implements DeviceLockContro
         Duration delay = Duration.ofMinutes(PROVISION_PAUSED_MINUTES_DEFAULT);
         if (Build.isDebuggable()) {
             delay = Duration.ofMinutes(
-                    SystemProperties.getInt(PROVISION_PAUSED_MINUTES_SYS_PROPERTY_KEY,
+                    getSharedPreferences(mContext).getInt(DEBUG_DEVICELOCK_PAUSED_MINUTES,
                             PROVISION_PAUSED_MINUTES_DEFAULT));
         }
         LogUtil.i(TAG, "Scheduling resume provision work with delay: " + delay);
@@ -184,23 +257,64 @@ public final class DeviceLockControllerSchedulerImpl implements DeviceLockContro
     }
 
     @Override
-    public void scheduleInitialCheckInWork() {
+    public ListenableFuture<Void> scheduleInitialCheckInWork() {
         LogUtil.i(TAG, "Scheduling initial check-in work");
-        enqueueCheckInWorkRequest(/* isExpedited= */ true, Duration.ZERO);
-        UserParameters.initialCheckInScheduled(mContext);
+        final Operation operation =
+                enqueueCheckInWorkRequest(/* isExpedited= */ true, Duration.ZERO);
+        final ListenableFuture<Operation.State.SUCCESS> result = operation.getResult();
+
+        return FluentFuture.from(result)
+                .transform((Function<Operation.State.SUCCESS, Void>) ignored -> {
+                    UserParameters.initialCheckInScheduled(mContext);
+                    return null;
+                }, mSequentialExecutor)
+                .catching(Throwable.class, (e) -> {
+                    LogUtil.e(TAG, "Failed to enqueue initial check in work", e);
+                    WorkManagerExceptionHandler.scheduleAlarm(mContext,
+                            AlarmReason.INITIAL_CHECK_IN);
+                    throw new RuntimeException(e);
+                }, mSequentialExecutor);
     }
 
     @Override
-    public void scheduleRetryCheckInWork(Duration delay) {
+    public ListenableFuture<Void> scheduleRetryCheckInWork(Duration delay) {
         LogUtil.i(TAG, "Scheduling retry check-in work with delay: " + delay);
-        enqueueCheckInWorkRequest(/* isExpedited= */ false, delay);
-        Instant whenExpectedToRun = Instant.now(mClock).plus(delay);
-        UserParameters.setNextCheckInTimeMillis(mContext, whenExpectedToRun.toEpochMilli());
+        final Operation operation =
+                enqueueCheckInWorkRequest(/* isExpedited= */ false, delay);
+        final ListenableFuture<Operation.State.SUCCESS> result = operation.getResult();
+
+        return FluentFuture.from(result)
+                .transform((Function<Operation.State.SUCCESS, Void>) ignored -> {
+                    Instant whenExpectedToRun = Instant.now(mClock).plus(delay);
+                    UserParameters.setNextCheckInTimeMillis(mContext,
+                            whenExpectedToRun.toEpochMilli());
+                    return null;
+                }, mSequentialExecutor)
+                .catching(Throwable.class, (e) -> {
+                    LogUtil.e(TAG, "Failed to enqueue retry check in work", e);
+                    WorkManagerExceptionHandler.scheduleAlarm(mContext,
+                            AlarmReason.RETRY_CHECK_IN);
+                    throw new RuntimeException(e);
+                }, mSequentialExecutor);
     }
 
     @Override
-    public void notifyNeedRescheduleCheckIn() {
-        dispatchFuture(this::rescheduleRetryCheckInWork, "notifyNeedRescheduleCheckIn");
+    public ListenableFuture<Void> notifyNeedRescheduleCheckIn() {
+        final ListenableFuture<Void> result =
+                Futures.submit(this::rescheduleRetryCheckInWork, mSequentialExecutor);
+        Futures.addCallback(result,
+                new FutureCallback<>() {
+                    @Override
+                    public void onSuccess(Void unused) {
+                        LogUtil.i(TAG, "Successfully called notifyNeedRescheduleCheckIn");
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        throw new RuntimeException("failed to call notifyNeedRescheduleCheckIn", t);
+                    }
+                }, MoreExecutors.directExecutor());
+        return result;
     }
 
     @VisibleForTesting
@@ -211,26 +325,61 @@ public final class DeviceLockControllerSchedulerImpl implements DeviceLockContro
                     Instant.now(mClock),
                     Instant.ofEpochMilli(nextCheckInTimeMillis));
             LogUtil.i(TAG, "Rescheduling retry check-in work with delay: " + delay);
-            enqueueCheckInWorkRequest(/* isExpedited= */ false, delay);
+            final Operation operation =
+                    enqueueCheckInWorkRequest(/* isExpedited= */ false, delay);
+            Futures.addCallback(operation.getResult(), new FutureCallback<>() {
+                @Override
+                public void onSuccess(Operation.State.SUCCESS result) {
+                    // No-op
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    LogUtil.e(TAG, "Failed to reschedule retry check in work", t);
+                    WorkManagerExceptionHandler.scheduleAlarm(mContext,
+                            AlarmReason.RESCHEDULE_CHECK_IN);
+                }
+            }, mSequentialExecutor);
         }
     }
 
     @Override
+    public ListenableFuture<Void> maybeScheduleInitialCheckIn() {
+        return FluentFuture.from(Futures.submit(() -> UserParameters.needInitialCheckIn(mContext),
+                        mSequentialExecutor))
+                .transformAsync(needCheckIn -> {
+                    if (needCheckIn) {
+                        return Futures.transform(scheduleInitialCheckInWork(),
+                                input -> false /* reschedule */, mSequentialExecutor);
+                    } else {
+                        return Futures.transform(
+                                GlobalParametersClient.getInstance().isProvisionReady(),
+                                ready -> !ready, mSequentialExecutor);
+                    }
+                }, mSequentialExecutor)
+                .transformAsync(reschedule -> {
+                    if (reschedule) {
+                        return notifyNeedRescheduleCheckIn();
+                    }
+                    return Futures.immediateVoidFuture();
+                }, mSequentialExecutor);
+    }
+
+    @Override
     public void scheduleNextProvisionFailedStepAlarm(boolean shouldRunImmediately) {
+        LogUtil.d(TAG,
+                "Scheduling next provision failed step alarm. Run immediately: "
+                        + shouldRunImmediately);
         long lastTimestamp = UserParameters.getNextProvisionFailedStepTimeMills(mContext);
         long nextTimestamp;
         if (lastTimestamp == 0) {
             lastTimestamp = Instant.now(mClock).toEpochMilli();
         }
-        Duration delay = shouldRunImmediately
-                ? Duration.ZERO
-                : Duration.ofMinutes(PROVISION_STATE_REPORT_INTERVAL_DEFAULT_MINUTES);
-        if (Build.isDebuggable()) {
-            long minutes = SystemProperties.getLong(
-                    KEY_PROVISION_REPORT_INTERVAL_MINUTES,
-                    PROVISION_STATE_REPORT_INTERVAL_DEFAULT_MINUTES);
-            delay = Duration.ofMinutes(minutes);
-        }
+        long minutes = Build.isDebuggable() ? getSharedPreferences(mContext).getLong(
+                DEBUG_DEVICELOCK_REPORT_INTERVAL_MINUTES,
+                PROVISION_STATE_REPORT_INTERVAL_DEFAULT_MINUTES)
+                : PROVISION_STATE_REPORT_INTERVAL_DEFAULT_MINUTES;
+        Duration delay = shouldRunImmediately ? Duration.ZERO : Duration.ofMinutes(minutes);
         nextTimestamp = lastTimestamp + delay.toMillis();
         scheduleNextProvisionFailedStepAlarm(
                 Duration.between(Instant.now(mClock), Instant.ofEpochMilli(nextTimestamp)));
@@ -251,8 +400,9 @@ public final class DeviceLockControllerSchedulerImpl implements DeviceLockContro
         Duration delay = Duration.ofMinutes(NON_MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE);
         if (Build.isDebuggable()) {
             delay = Duration.ofMinutes(
-                    SystemProperties.getInt("devicelock.provision.reset-device-minutes",
-                            NON_MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE));
+                    getSharedPreferences(mContext)
+                            .getInt(DEBUG_DEVICELOCK_RESET_DEVICE_MINUTES,
+                                    NON_MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE));
         }
         scheduleResetDeviceAlarm(delay);
     }
@@ -262,8 +412,9 @@ public final class DeviceLockControllerSchedulerImpl implements DeviceLockContro
         Duration delay = Duration.ofMinutes(MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE);
         if (Build.isDebuggable()) {
             delay = Duration.ofMinutes(
-                    SystemProperties.getInt("devicelock.provision.mandatory-reset-device-minutes",
-                            MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE));
+                    getSharedPreferences(mContext)
+                            .getInt(DEBUG_DEVICELOCK_MANDATORY_RESET_DEVICE_MINUTES,
+                                    MANDATORY_PROVISION_DEVICE_RESET_COUNTDOWN_MINUTE));
         }
         scheduleResetDeviceAlarm(delay);
     }
@@ -330,17 +481,17 @@ public final class DeviceLockControllerSchedulerImpl implements DeviceLockContro
                 }, MoreExecutors.directExecutor());
     }
 
-    private void enqueueCheckInWorkRequest(boolean isExpedited, Duration delay) {
+    private Operation enqueueCheckInWorkRequest(boolean isExpedited, Duration delay) {
         OneTimeWorkRequest.Builder builder =
                 new OneTimeWorkRequest.Builder(DeviceCheckInWorker.class)
                         .setConstraints(
                                 new Constraints.Builder().setRequiredNetworkType(
                                         NetworkType.CONNECTED).build())
                         .setInitialDelay(delay)
-                        .setBackoffCriteria(BackoffPolicy.LINEAR,
-                                Duration.ofMinutes(CHECK_IN_INTERVAL_MINUTE));
+                        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, BACKOFF_DELAY);
         if (isExpedited) builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST);
-        WorkManager.getInstance(mContext).enqueueUniqueWork(DEVICE_CHECK_IN_WORK_NAME,
+
+        return WorkManager.getInstance(mContext).enqueueUniqueWork(DEVICE_CHECK_IN_WORK_NAME,
                 ExistingWorkPolicy.REPLACE, builder.build());
     }
 

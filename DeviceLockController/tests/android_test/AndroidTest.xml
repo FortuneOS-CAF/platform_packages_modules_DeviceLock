@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  ~ Copyright (C) 2022 The Android Open Source Project
+  ~ Copyright (C) 2023 The Android Open Source Project
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
   ~ you may not use this file except in compliance with the License.
@@ -14,21 +14,18 @@
   ~ See the License for the specific language governing permissions and
   ~ limitations under the License.
   -->
-<configuration description="Config for Device Lock unit test cases">
-    <option name="test-tag" value="DeviceLockUnitTests" />
-
+<configuration description="Runs unit tests for DeviceLockController APEX.">
+    <option name="test-tag" value="DeviceLockControllerAndroidTests"/>
     <target_preparer class="com.android.tradefed.targetprep.suite.SuiteApkInstaller">
         <option name="cleanup-apks" value="true"/>
-        <option name="test-file-name" value="DeviceLockUnitTests.apk"/>
+        <option name="test-file-name" value="DeviceLockControllerAndroidTests.apk"/>
     </target_preparer>
 
     <test class="com.android.tradefed.testtype.AndroidJUnitTest">
-        <option name="hidden-api-checks" value="false" />
-        <option name="package" value="com.android.server.devicelock.tests"/>
+        <option name="package" value="com.android.devicelockcontroller.tests"/>
+        <option name="hidden-api-checks" value="false"/>
     </test>
 
     <object type="module_controller"
-            class="com.android.tradefed.testtype.suite.module.MainlineTestModuleController">
-        <option name="mainline-module-package-name" value="com.google.android.devicelock"/>
-    </object>
+            class="com.android.tradefed.testtype.suite.module.Sdk34ModuleController"/>
 </configuration>

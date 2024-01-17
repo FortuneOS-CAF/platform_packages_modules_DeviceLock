@@ -112,6 +112,24 @@ java_library {
     ],
 }
 
+java_test_helper_library {
+    name: "devicelockcontroller-stats",
+    sdk_version: "module_current",
+    srcs: [
+        "src/**/stats/*.java",
+        ":statslog-devicelock-java-gen",
+    ],
+    libs: [
+        "framework-statsd",
+    ],
+    static_libs: [
+        "modules-utils-expresslog",
+    ],
+    visibility: [
+        "//packages/modules/DeviceLock:__subpackages__",
+    ],
+}
+
 // Library with all dependencies for building DeviceLockController
 android_library {
     name: "devicelockcontroller-lib",
@@ -147,6 +165,7 @@ android_library {
         "dagger2",
         "SettingsLibCollapsingToolbarBaseActivity",
         "SettingsLibTopIntroPreference",
+        "modules-utils-expresslog",
     ],
     manifest: "AndroidManifestBase.xml",
     apex_available: [

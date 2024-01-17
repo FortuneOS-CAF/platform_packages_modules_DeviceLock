@@ -17,28 +17,33 @@
 package com.android.devicelockcontroller.provision.worker;
 
 import android.content.Context;
+import android.telephony.TelephonyManager;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.work.Data;
 import androidx.work.WorkerParameters;
 
-import com.android.devicelockcontroller.common.DeviceLockConstants.ProvisionFailureReason;
 import com.android.devicelockcontroller.provision.grpc.DeviceCheckInClient;
 import com.android.devicelockcontroller.provision.grpc.IsDeviceInApprovedCountryGrpcResponse;
+import com.android.devicelockcontroller.stats.StatsLoggerProvider;
+import com.android.devicelockcontroller.util.LogUtil;
 
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
-import com.google.common.util.concurrent.MoreExecutors;
+
+import java.util.Objects;
 
 /**
  * A worker class dedicated to check whether device is in approved country.
+ * Note that this worker always returns {@link androidx.work.ListenableWorker.Result.Success}
+ * regardless of the success of the underlying rpc.
+ * This worker only returns a successful result if it gets the country eligibility information from
+ * the server.
  */
-public final class IsDeviceInApprovedCountryWorker extends
-        AbstractCheckInWorker {
+public final class IsDeviceInApprovedCountryWorker extends AbstractCheckInWorker {
 
-    public static final String KEY_CARRIER_INFO = "carrier-info";
     public static final String KEY_IS_IN_APPROVED_COUNTRY = "is-in-approved-country";
 
     public IsDeviceInApprovedCountryWorker(@NonNull Context context,
@@ -57,10 +62,15 @@ public final class IsDeviceInApprovedCountryWorker extends
     @Override
     public ListenableFuture<Result> startWork() {
         return Futures.transform(mClient, client -> {
-            String carrierInfo = getInputData().getString(KEY_CARRIER_INFO);
+            String carrierInfo = Objects.requireNonNull(
+                    mContext.getSystemService(TelephonyManager.class)).getSimOperator();
             IsDeviceInApprovedCountryGrpcResponse response =
                     client.isDeviceInApprovedCountry(carrierInfo);
+            ((StatsLoggerProvider) mContext.getApplicationContext()).getStatsLogger()
+                    .logIsDeviceInApprovedCountry();
             if (response.hasRecoverableError()) {
+                LogUtil.w(TAG, "Is in approve country failed w/ recoverable error" + response
+                        + "\nRetrying...");
                 return Result.retry();
             }
             Data.Builder builder = new Data.Builder();
@@ -68,9 +78,7 @@ public final class IsDeviceInApprovedCountryWorker extends
                 return Result.success(builder.putBoolean(KEY_IS_IN_APPROVED_COUNTRY,
                         response.isDeviceInApprovedCountry()).build());
             }
-            return Result.failure(builder.putInt(
-                    ReportDeviceProvisionStateWorker.KEY_PROVISION_FAILURE_REASON,
-                    ProvisionFailureReason.COUNTRY_INFO_UNAVAILABLE).build());
-        }, MoreExecutors.directExecutor());
+            return Result.failure();
+        }, mExecutorService);
     }
 }

@@ -20,16 +20,22 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import android.app.Application;
+import android.content.Context;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.work.ListenableWorker;
+import androidx.work.WorkerParameters;
 
 import com.android.devicelockcontroller.policy.DevicePolicyController;
 import com.android.devicelockcontroller.policy.DeviceStateController;
 import com.android.devicelockcontroller.policy.FinalizationController;
-import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
+import com.android.devicelockcontroller.policy.PolicyObjectsProvider;
 import com.android.devicelockcontroller.policy.ProvisionStateController;
 import com.android.devicelockcontroller.schedule.DeviceLockControllerScheduler;
 import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerProvider;
+import com.android.devicelockcontroller.stats.StatsLogger;
+import com.android.devicelockcontroller.stats.StatsLoggerProvider;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.GlobalParametersService;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
@@ -48,18 +54,21 @@ import java.lang.reflect.Method;
  * Application class that provides mock objects for tests.
  */
 public final class TestDeviceLockControllerApplication extends Application implements
-        PolicyObjectsInterface,
+        PolicyObjectsProvider,
         TestLifecycleApplication,
         DeviceLockControllerSchedulerProvider,
-        FcmRegistrationTokenProvider {
+        FcmRegistrationTokenProvider,
+        PlayInstallPackageTaskClassProvider,
+        StatsLoggerProvider {
 
     private DevicePolicyController mPolicyController;
     private DeviceStateController mStateController;
-    private ProvisionStateController mUserStateController;
+    private ProvisionStateController mProvisionStateController;
     private FinalizationController mFinalizationController;
     private DeviceLockControllerScheduler mDeviceLockControllerScheduler;
     private SetupParametersClient mSetupParametersClient;
     private GlobalParametersClient mGlobalParametersClient;
+    private StatsLogger mStatsLogger;
 
     @Override
     public DeviceStateController getDeviceStateController() {
@@ -71,15 +80,14 @@ public final class TestDeviceLockControllerApplication extends Application imple
 
     @Override
     public ProvisionStateController getProvisionStateController() {
-        if (mUserStateController == null) {
-            mUserStateController = mock(ProvisionStateController.class);
-            when(mUserStateController.getDevicePolicyController()).thenReturn(
+        if (mProvisionStateController == null) {
+            mProvisionStateController = mock(ProvisionStateController.class);
+            when(mProvisionStateController.getDevicePolicyController()).thenReturn(
                     getPolicyController());
-            when(mUserStateController.getDeviceStateController()).thenReturn(
+            when(mProvisionStateController.getDeviceStateController()).thenReturn(
                     getDeviceStateController());
-
         }
-        return mUserStateController;
+        return mProvisionStateController;
     }
 
     @Override
@@ -96,6 +104,14 @@ public final class TestDeviceLockControllerApplication extends Application imple
             mFinalizationController = mock(FinalizationController.class);
         }
         return mFinalizationController;
+    }
+
+    @Override
+    public synchronized StatsLogger getStatsLogger() {
+        if (null == mStatsLogger) {
+            mStatsLogger = mock(StatsLogger.class);
+        }
+        return mStatsLogger;
     }
 
     @Override
@@ -140,5 +156,28 @@ public final class TestDeviceLockControllerApplication extends Application imple
             mDeviceLockControllerScheduler = mock(DeviceLockControllerScheduler.class);
         }
         return mDeviceLockControllerScheduler;
+    }
+
+    @Nullable
+    @Override
+    public Class<? extends ListenableWorker> getPlayInstallPackageTaskClass() {
+        return PlayInstallPackageWorker.class;
+    }
+
+    /**
+     * A stub class for play install worker.
+     */
+    public static final class PlayInstallPackageWorker extends ListenableWorker {
+
+        public PlayInstallPackageWorker(@NonNull Context appContext,
+                @NonNull WorkerParameters workerParameters) {
+            super(appContext, workerParameters);
+        }
+
+        @NonNull
+        @Override
+        public ListenableFuture<Result> startWork() {
+            return Futures.immediateFuture(Result.success());
+        }
     }
 }

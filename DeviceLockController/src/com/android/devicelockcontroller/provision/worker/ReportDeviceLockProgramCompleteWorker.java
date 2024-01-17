@@ -26,9 +26,10 @@ import androidx.work.WorkerParameters;
 
 import com.android.devicelockcontroller.R;
 import com.android.devicelockcontroller.policy.FinalizationController;
-import com.android.devicelockcontroller.policy.PolicyObjectsInterface;
+import com.android.devicelockcontroller.policy.PolicyObjectsProvider;
 import com.android.devicelockcontroller.provision.grpc.DeviceFinalizeClient;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
+import com.android.devicelockcontroller.util.LogUtil;
 
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -40,17 +41,19 @@ import com.google.common.util.concurrent.MoreExecutors;
  */
 public final class ReportDeviceLockProgramCompleteWorker extends ListenableWorker {
 
+    private static final String TAG = ReportDeviceLockProgramCompleteWorker.class.getSimpleName();
+
     public static final String REPORT_DEVICE_LOCK_PROGRAM_COMPLETE_WORK_NAME =
             "report-device-lock-program-complete";
     private final ListenableFuture<DeviceFinalizeClient> mClient;
-    private final PolicyObjectsInterface mPolicyObjectsInterface;
+    private final PolicyObjectsProvider mPolicyObjectsProvider;
 
     public ReportDeviceLockProgramCompleteWorker(@NonNull Context context,
             @NonNull WorkerParameters workerParams, ListeningExecutorService executorService) {
         this(context,
                 workerParams,
                 null,
-                ((PolicyObjectsInterface) context.getApplicationContext()),
+                ((PolicyObjectsProvider) context.getApplicationContext()),
                 executorService);
     }
 
@@ -58,7 +61,7 @@ public final class ReportDeviceLockProgramCompleteWorker extends ListenableWorke
     ReportDeviceLockProgramCompleteWorker(@NonNull Context context,
             @NonNull WorkerParameters workerParams,
             DeviceFinalizeClient client,
-            PolicyObjectsInterface policyObjectsInterface,
+            PolicyObjectsProvider policyObjectsProvider,
             ListeningExecutorService executorService) {
         super(context, workerParams);
         if (client == null) {
@@ -79,17 +82,19 @@ public final class ReportDeviceLockProgramCompleteWorker extends ListenableWorke
         } else {
             mClient = Futures.immediateFuture(client);
         }
-        mPolicyObjectsInterface = policyObjectsInterface;
+        mPolicyObjectsProvider = policyObjectsProvider;
     }
 
     @NonNull
     @Override
     public ListenableFuture<Result> startWork() {
-        FinalizationController controller = mPolicyObjectsInterface.getFinalizationController();
+        FinalizationController controller = mPolicyObjectsProvider.getFinalizationController();
         return Futures.transformAsync(mClient, client -> {
             DeviceFinalizeClient.ReportDeviceProgramCompleteResponse response =
                     client.reportDeviceProgramComplete();
             if (response.hasRecoverableError()) {
+                LogUtil.w(TAG, "Report finalization failed w/ recoverable error" + response
+                        + "\nRetrying...");
                 return Futures.immediateFuture(Result.retry());
             }
             ListenableFuture<Void> notifyFuture =
