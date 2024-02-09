@@ -152,14 +152,14 @@ public final class FinalizationControllerImplTest {
         }
 
         @Override
-        public void setExemptFromActivityBackgroundStartRestriction(boolean exempt,
+        public void setDlcExemptFromActivityBgStartRestrictionState(boolean exempt,
                 Executor executor, @NonNull OutcomeReceiver<Void, Exception> callback) {
 
         }
 
         @Override
-        public void setExemptFromHibernation(String packageName, boolean exempt, Executor executor,
-                @NonNull OutcomeReceiver<Void, Exception> callback) {
+        public void setKioskAppExemptFromRestrictionsState(String packageName, boolean exempt,
+                Executor executor, @NonNull OutcomeReceiver<Void, Exception> callback) {
 
         }
 
@@ -171,6 +171,18 @@ public final class FinalizationControllerImplTest {
 
         @Override
         public void disableKioskKeepalive(Executor executor,
+                @NonNull OutcomeReceiver<Void, Exception> callback) {
+
+        }
+
+        @Override
+        public void enableControllerKeepalive(Executor executor,
+                @NonNull OutcomeReceiver<Void, Exception> callback) {
+
+        }
+
+        @Override
+        public void disableControllerKeepalive(Executor executor,
                 @NonNull OutcomeReceiver<Void, Exception> callback) {
 
         }

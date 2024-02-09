@@ -21,35 +21,29 @@ import android.os.OutcomeReceiver;
 import androidx.concurrent.futures.CallbackToFutureAdapter;
 
 import com.android.devicelockcontroller.SystemDeviceLockManager;
-import com.android.devicelockcontroller.storage.SetupParametersClient;
-import com.android.devicelockcontroller.storage.SetupParametersClientInterface;
 import com.android.devicelockcontroller.util.LogUtil;
 
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 
 import java.util.concurrent.Executor;
 
-/** Handles kiosk app keep-alive. */
-public final class KioskKeepAlivePolicyHandler implements PolicyHandler {
-    private static final String TAG = "KioskKeepAlivePolicyHandler";
+/** Handles device lock controller keep-alive. */
+public final class ControllerKeepAlivePolicyHandler implements PolicyHandler {
+    private static final String TAG = "ControllerKeepAlivePolicyHandler";
 
     private final SystemDeviceLockManager mSystemDeviceLockManager;
-    private final SetupParametersClientInterface mSetupParametersClient;
     private final Executor mBgExecutor;
 
-    KioskKeepAlivePolicyHandler(SystemDeviceLockManager systemDeviceLockManager,
+    ControllerKeepAlivePolicyHandler(SystemDeviceLockManager systemDeviceLockManager,
             Executor bgExecutor) {
         mSystemDeviceLockManager = systemDeviceLockManager;
         mBgExecutor = bgExecutor;
-        mSetupParametersClient = SetupParametersClient.getInstance();
     }
 
-    private ListenableFuture<Boolean> getEnableKioskKeepAliveFuture(String packageName) {
+    private ListenableFuture<Boolean> getEnableControllerKeepAliveFuture() {
         return CallbackToFutureAdapter.getFuture(
                 completer -> {
-                    mSystemDeviceLockManager.enableKioskKeepalive(packageName,
+                    mSystemDeviceLockManager.enableControllerKeepalive(
                             mBgExecutor,
                             new OutcomeReceiver<>() {
                                 @Override
@@ -59,28 +53,21 @@ public final class KioskKeepAlivePolicyHandler implements PolicyHandler {
 
                                 @Override
                                 public void onError(Exception ex) {
-                                    // Return true since the keep-alive service is optional
-                                    LogUtil.d(TAG, "Failed to enable kiosk keep-alive", ex);
+                                    LogUtil.e(TAG, "Failed to enable controller keep-alive",
+                                            ex);
+                                    // Return SUCCESS since we don't want to fail the transition
                                     completer.set(true);
                                 }
                             });
                     // Used only for debugging.
-                    return "getEnableKioskKeepAliveFuture";
+                    return "getEnableControllerKeepAliveFuture";
                 });
     }
 
-    private ListenableFuture<Boolean> getEnableKioskKeepAliveFuture() {
-        return Futures.transformAsync(mSetupParametersClient.getKioskPackage(),
-                kioskPackageName -> kioskPackageName == null
-                        ? Futures.immediateFuture(false)
-                        : getEnableKioskKeepAliveFuture(kioskPackageName),
-                MoreExecutors.directExecutor());
-    }
-
-    private ListenableFuture<Boolean> getDisableKioskKeepAliveFuture() {
+    private ListenableFuture<Boolean> getDisableControllerKeepAliveFuture() {
         return CallbackToFutureAdapter.getFuture(
                 completer -> {
-                    mSystemDeviceLockManager.disableKioskKeepalive(mBgExecutor,
+                    mSystemDeviceLockManager.disableControllerKeepalive(mBgExecutor,
                             new OutcomeReceiver<>() {
                                 @Override
                                 public void onResult(Void result) {
@@ -89,23 +76,29 @@ public final class KioskKeepAlivePolicyHandler implements PolicyHandler {
 
                                 @Override
                                 public void onError(Exception ex) {
-                                    // Return true since the keep-alive service is optional
-                                    LogUtil.d(TAG, "Failed to disable kiosk keep-alive", ex);
+                                    LogUtil.e(TAG, "Failed to disable controller keep-alive",
+                                            ex);
+                                    // Return SUCCESS since we don't want to fail the transition
                                     completer.set(true);
                                 }
                             });
                     // Used only for debugging.
-                    return "getDisableKioskKeepAliveFuture";
+                    return "getDisableControllerKeepAliveFuture";
                 });
     }
 
     @Override
-    public ListenableFuture<Boolean> onProvisioned() {
-        return getEnableKioskKeepAliveFuture();
+    public ListenableFuture<Boolean> onProvisionInProgress() {
+        return getEnableControllerKeepAliveFuture();
     }
 
     @Override
-    public ListenableFuture<Boolean> onCleared() {
-        return getDisableKioskKeepAliveFuture();
+    public ListenableFuture<Boolean> onProvisionPaused() {
+        return getDisableControllerKeepAliveFuture();
+    }
+
+    @Override
+    public ListenableFuture<Boolean> onProvisioned() {
+        return getDisableControllerKeepAliveFuture();
     }
 }

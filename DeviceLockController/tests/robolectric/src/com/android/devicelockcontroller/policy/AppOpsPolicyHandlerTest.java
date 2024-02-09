@@ -71,54 +71,38 @@ public final class AppOpsPolicyHandlerTest {
             callback.onResult(null /* result */);
 
             return null;
-        }).when(mSystemDeviceLockManagerMock)
-                .setExemptFromActivityBackgroundStartRestriction(anyBoolean(),
-                        any(Executor.class),
-                        any());
+        }).when(mSystemDeviceLockManagerMock).setDlcExemptFromActivityBgStartRestrictionState(
+                anyBoolean(), any(Executor.class), any());
 
         doAnswer((Answer<Boolean>) invocation -> {
             OutcomeReceiver<Void, Exception> callback = invocation.getArgument(3 /* callback */);
             callback.onResult(null /* result */);
 
             return null;
-        }).when(mSystemDeviceLockManagerMock)
-                .setExemptFromHibernation(anyString(), anyBoolean(),
-                        any(Executor.class),
-                        any());
+        }).when(mSystemDeviceLockManagerMock).setKioskAppExemptFromRestrictionsState(anyString(),
+                anyBoolean(), any(Executor.class), any());
     }
 
     @Test
-    public void onProvisioned_shouldExemptBackgroundStartAndHibernation()
+    public void onProvisioned_shouldExemptBackgroundStartAndKioskApp()
             throws ExecutionException, InterruptedException {
         mHandler.onProvisioned().get();
 
-        verify(mSystemDeviceLockManagerMock)
-                .setExemptFromActivityBackgroundStartRestriction(
-                        eq(true),
-                        any(Executor.class),
-                        any());
-        verify(mSystemDeviceLockManagerMock)
-                .setExemptFromHibernation(anyString(),
-                        eq(true),
-                        any(Executor.class),
-                        any());
+        verify(mSystemDeviceLockManagerMock).setDlcExemptFromActivityBgStartRestrictionState(
+                eq(true), any(Executor.class), any());
+        verify(mSystemDeviceLockManagerMock).setKioskAppExemptFromRestrictionsState(
+                eq(TEST_PACKAGE), eq(true), any(Executor.class), any());
     }
 
     @Test
-    public void onProvisionInProgress_shouldExemptBackgroundStartNotHibernation()
+    public void onProvisionInProgress_shouldExemptBackgroundStartNotKioskApp()
             throws ExecutionException, InterruptedException {
         mHandler.onProvisionInProgress().get();
 
-        verify(mSystemDeviceLockManagerMock)
-                .setExemptFromActivityBackgroundStartRestriction(
-                        eq(true),
-                        any(Executor.class),
-                        any());
-        verify(mSystemDeviceLockManagerMock, never())
-                .setExemptFromHibernation(anyString(),
-                        eq(true),
-                        any(Executor.class),
-                        any());
+        verify(mSystemDeviceLockManagerMock).setDlcExemptFromActivityBgStartRestrictionState(
+                eq(true), any(Executor.class), any());
+        verify(mSystemDeviceLockManagerMock, never()).setKioskAppExemptFromRestrictionsState(
+                anyString(), anyBoolean(), any(Executor.class), any());
     }
 
     @Test
@@ -126,59 +110,39 @@ public final class AppOpsPolicyHandlerTest {
             throws ExecutionException, InterruptedException {
         mHandler.onProvisionFailed().get();
 
-        verify(mSystemDeviceLockManagerMock)
-                .setExemptFromActivityBackgroundStartRestriction(
-                        eq(false),
-                        any(Executor.class),
-                        any());
+        verify(mSystemDeviceLockManagerMock).setDlcExemptFromActivityBgStartRestrictionState(
+                eq(false), any(Executor.class), any());
     }
 
     @Test
-    public void onCleared_shouldBanBackgroundStartAndHibernation()
+    public void onCleared_shouldBanBackgroundStartAndResetKioskAppExemption()
             throws ExecutionException, InterruptedException {
         mHandler.onCleared().get();
 
-        verify(mSystemDeviceLockManagerMock)
-                .setExemptFromActivityBackgroundStartRestriction(
-                        eq(false),
-                        any(Executor.class),
-                        any());
-        verify(mSystemDeviceLockManagerMock)
-                .setExemptFromHibernation(anyString(),
-                        eq(false),
-                        any(Executor.class),
-                        any());
+        verify(mSystemDeviceLockManagerMock).setDlcExemptFromActivityBgStartRestrictionState(
+                eq(false), any(Executor.class), any());
+        verify(mSystemDeviceLockManagerMock).setKioskAppExemptFromRestrictionsState(
+                eq(TEST_PACKAGE), eq(false), any(Executor.class), any());
     }
 
     @Test
-    public void onLocked_shouldExemptBackgroundStartAndHibernation()
+    public void onLocked_shouldExemptBackgroundStartAndKioskApp()
             throws ExecutionException, InterruptedException {
         mHandler.onLocked().get();
-        verify(mSystemDeviceLockManagerMock)
-                .setExemptFromActivityBackgroundStartRestriction(
-                        eq(true),
-                        any(Executor.class),
-                        any());
-        verify(mSystemDeviceLockManagerMock)
-                .setExemptFromHibernation(anyString(),
-                        eq(true),
-                        any(Executor.class),
-                        any());
+        verify(mSystemDeviceLockManagerMock).setDlcExemptFromActivityBgStartRestrictionState(
+                eq(true), any(Executor.class), any());
+        verify(mSystemDeviceLockManagerMock).setKioskAppExemptFromRestrictionsState(
+                eq(TEST_PACKAGE), eq(true), any(Executor.class), any());
     }
 
     @Test
-    public void onUnlocked_shouldExemptHibernationNotBackgroundStart()
+    public void onUnlocked_shouldExemptKioskAppNotBackgroundStart()
             throws ExecutionException, InterruptedException {
         mHandler.onUnlocked().get();
-        verify(mSystemDeviceLockManagerMock, never())
-                .setExemptFromActivityBackgroundStartRestriction(
-                        eq(true),
-                        any(Executor.class),
-                        any());
-        verify(mSystemDeviceLockManagerMock)
-                .setExemptFromHibernation(anyString(),
-                        eq(true),
-                        any(Executor.class),
-                        any());
+        verify(mSystemDeviceLockManagerMock,
+                never()).setDlcExemptFromActivityBgStartRestrictionState(anyBoolean(),
+                any(Executor.class), any());
+        verify(mSystemDeviceLockManagerMock).setKioskAppExemptFromRestrictionsState(
+                eq(TEST_PACKAGE), eq(true), any(Executor.class), any());
     }
 }

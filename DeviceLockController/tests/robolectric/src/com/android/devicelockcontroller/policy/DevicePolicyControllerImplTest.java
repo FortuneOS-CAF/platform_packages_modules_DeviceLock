@@ -133,6 +133,10 @@ public final class DevicePolicyControllerImplTest {
         KioskKeepAlivePolicyHandler kioskKeepAlivePolicyHandler = new KioskKeepAlivePolicyHandler(
                 mMockSystemDeviceLockManager,
                 bgExecutor);
+        ControllerKeepAlivePolicyHandler controllerKeepAlivePolicyHandler =
+                new ControllerKeepAlivePolicyHandler(
+                        mMockSystemDeviceLockManager,
+                        bgExecutor);
         mDevicePolicyController =
                 new DevicePolicyControllerImpl(mContext,
                         mMockDpm,
@@ -143,6 +147,7 @@ public final class DevicePolicyControllerImplTest {
                         packagePolicyHandler,
                         rolePolicyHandler,
                         kioskKeepAlivePolicyHandler,
+                        controllerKeepAlivePolicyHandler,
                         mMockProvisionStateController,
                         bgExecutor);
     }
@@ -182,6 +187,7 @@ public final class DevicePolicyControllerImplTest {
             throws Exception {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnEnableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_IN_PROGRESS));
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
@@ -198,6 +204,7 @@ public final class DevicePolicyControllerImplTest {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnEnableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnAddFinancedDeviceKioskRole();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.KIOSK_PROVISIONED));
@@ -213,9 +220,26 @@ public final class DevicePolicyControllerImplTest {
     public void enforceCurrentPolicies_withProvisionPausedState_doesNotStartLockTaskMode()
             throws Exception {
         setupSetupParameters();
+        setExpectationsOnDisableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_PAUSED));
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
+
+        mDevicePolicyController.enforceCurrentPolicies().get();
+
+        shadowOf(Looper.getMainLooper()).idle();
+        assertLockTaskModeNotStarted();
+    }
+
+    @Test
+    public void enforceCurrentPolicies_withProvisionPausedAndDeviceLocked_doesNotStartLockTaskMode()
+            throws Exception {
+        setupSetupParameters();
+        setExpectationsOnDisableControllerKeepAlive();
+        when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
+                ProvisionState.PROVISION_PAUSED));
+        when(mMockUserManager.isUserUnlocked()).thenReturn(true);
+        GlobalParametersClient.getInstance().setDeviceState(LOCKED).get();
 
         mDevicePolicyController.enforceCurrentPolicies().get();
 
@@ -242,6 +266,7 @@ public final class DevicePolicyControllerImplTest {
     public void enforceCurrentPolicies_withProvisionSucceededState_doesNotStartLockTaskMode()
             throws Exception {
         setupSetupParameters();
+        setExpectationsOnDisableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_SUCCEEDED));
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
@@ -290,10 +315,31 @@ public final class DevicePolicyControllerImplTest {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnDisableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnRemoveFinancedDeviceKioskRole();
         setupFinalizationControllerExpectations();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_SUCCEEDED));
+        when(mMockUserManager.isUserUnlocked()).thenReturn(true);
+        GlobalParametersClient.getInstance().setDeviceState(CLEARED).get();
+
+        mDevicePolicyController.enforceCurrentPolicies().get();
+
+        shadowOf(Looper.getMainLooper()).idle();
+        assertLockTaskModeNotStarted();
+    }
+
+    @Test
+    public void enforceCurrentPolicies_clearedButProvisionInProgress_doesNotStartLockTaskMode()
+            throws Exception {
+        setupSetupParameters();
+        setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnDisableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
+        setExpectationsOnRemoveFinancedDeviceKioskRole();
+        setupFinalizationControllerExpectations();
+        when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
+                ProvisionState.PROVISION_IN_PROGRESS));
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
         GlobalParametersClient.getInstance().setDeviceState(CLEARED).get();
 
@@ -325,6 +371,7 @@ public final class DevicePolicyControllerImplTest {
             getLaunchIntent_withProvisionPausedState_forCriticalFailure_shouldHaveExpectedIntent()
             throws Exception {
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
+        setExpectationsOnDisableControllerKeepAlive();
 
         mDevicePolicyController.enforceCurrentPoliciesForCriticalFailure().get();
 
@@ -401,6 +448,7 @@ public final class DevicePolicyControllerImplTest {
             getLaunchIntent_withProvisionInProgressSt_forCriticalFailure_shouldHaveExpectedIntent()
             throws Exception {
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
+        setExpectationsOnEnableControllerKeepAlive();
 
         mDevicePolicyController.enforceCurrentPoliciesForCriticalFailure().get();
 
@@ -427,6 +475,7 @@ public final class DevicePolicyControllerImplTest {
     @Test
     public void getLaunchIntentForCurrentState_withProvisionPausedState_shouldMakeExpectedCalls()
             throws ExecutionException, InterruptedException {
+        setExpectationsOnDisableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_PAUSED));
         Intent intent = mDevicePolicyController.getLaunchIntentForCurrentState().get();
@@ -447,6 +496,7 @@ public final class DevicePolicyControllerImplTest {
     public void getLaunchIntentForCurrentState_withProvisionSucceededState_shouldMakeExpectedCalls()
             throws ExecutionException, InterruptedException {
         setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnDisableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_SUCCEEDED));
         Intent intent = mDevicePolicyController.getLaunchIntentForCurrentState().get();
@@ -459,6 +509,7 @@ public final class DevicePolicyControllerImplTest {
             throws ExecutionException, InterruptedException {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnDisableControllerKeepAlive();
         GlobalParametersClient.getInstance().setDeviceState(LOCKED).get();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_SUCCEEDED));
@@ -526,17 +577,38 @@ public final class DevicePolicyControllerImplTest {
     }
 
     @Test
-    public void getLaunchIntentForCurrentState_withProvisionSucceededStateAndDeviceStateCleared()
+    public void getLaunchIntentForCurrentState_withDeviceStateCleared_returnsNull()
             throws ExecutionException, InterruptedException {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnDisableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnRemoveFinancedDeviceKioskRole();
         setupFinalizationControllerExpectations();
         GlobalParametersClient.getInstance().setDeviceState(CLEARED).get();
         installKioskAppWithoutCategoryHomeIntentFilter();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_SUCCEEDED));
+
+        Intent intent = mDevicePolicyController.getLaunchIntentForCurrentState().get();
+
+        shadowOf(Looper.getMainLooper()).idle();
+        assertThat(intent).isNull();
+    }
+
+    @Test
+    public void getLaunchIntentForCurrentState_provisionInProgressButCleared_returnsNull()
+            throws ExecutionException, InterruptedException {
+        setupSetupParameters();
+        setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnDisableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
+        setExpectationsOnRemoveFinancedDeviceKioskRole();
+        setupFinalizationControllerExpectations();
+        GlobalParametersClient.getInstance().setDeviceState(CLEARED).get();
+        installKioskAppWithoutCategoryHomeIntentFilter();
+        when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
+                ProvisionState.PROVISION_IN_PROGRESS));
 
         Intent intent = mDevicePolicyController.getLaunchIntentForCurrentState().get();
 
@@ -565,6 +637,7 @@ public final class DevicePolicyControllerImplTest {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnEnableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnAddFinancedDeviceKioskRole();
         installKioskAppWithSetupIntentFilter();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
@@ -584,6 +657,7 @@ public final class DevicePolicyControllerImplTest {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnEnableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnAddFinancedDeviceKioskRole();
 
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
@@ -601,6 +675,7 @@ public final class DevicePolicyControllerImplTest {
     public void getLaunchIntentForCurrentState_withKioskProvisionedState_withoutKioskAppPackage() {
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnEnableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnAddFinancedDeviceKioskRole();
         installKioskAppWithSetupIntentFilter();
 
@@ -612,7 +687,7 @@ public final class DevicePolicyControllerImplTest {
 
         assertThat(thrown).hasCauseThat().isInstanceOf(IllegalStateException.class);
         assertThat(thrown).hasMessageThat().contains(
-                "Failed to enforce polices for provision state:");
+                "Failed to enforce policies for provision state");
     }
 
     @Test
@@ -620,6 +695,7 @@ public final class DevicePolicyControllerImplTest {
             throws ExecutionException, InterruptedException {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnEnableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_IN_PROGRESS));
 
@@ -639,6 +715,7 @@ public final class DevicePolicyControllerImplTest {
         SetupParametersClient.getInstance().createPrefs(preferences).get();
 
         setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnEnableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_IN_PROGRESS));
 
@@ -658,6 +735,7 @@ public final class DevicePolicyControllerImplTest {
         SetupParametersClient.getInstance().createPrefs(preferences).get();
 
         setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnEnableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_IN_PROGRESS));
 
@@ -678,6 +756,7 @@ public final class DevicePolicyControllerImplTest {
         SetupParametersClient.getInstance().createPrefs(preferences).get();
 
         setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnEnableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_IN_PROGRESS));
 
@@ -708,6 +787,7 @@ public final class DevicePolicyControllerImplTest {
             throws Exception {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnEnableControllerKeepAlive();
         when(mMockProvisionStateController.onUserUnlocked()).thenReturn(
                 Futures.immediateVoidFuture());
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
@@ -726,6 +806,7 @@ public final class DevicePolicyControllerImplTest {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnEnableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnAddFinancedDeviceKioskRole();
         when(mMockProvisionStateController.onUserUnlocked()).thenReturn(
                 Futures.immediateVoidFuture());
@@ -743,6 +824,7 @@ public final class DevicePolicyControllerImplTest {
     public void onUserUnlocked_withProvisionPausedState_shouldMakeExpectedCalls()
             throws Exception {
         setupSetupParameters();
+        setExpectationsOnDisableControllerKeepAlive();
         when(mMockProvisionStateController.onUserUnlocked()).thenReturn(
                 Futures.immediateVoidFuture());
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
@@ -827,6 +909,7 @@ public final class DevicePolicyControllerImplTest {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnDisableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnRemoveFinancedDeviceKioskRole();
         setupFinalizationControllerExpectations();
         when(mMockProvisionStateController.onUserUnlocked()).thenReturn(
@@ -843,65 +926,68 @@ public final class DevicePolicyControllerImplTest {
     }
 
     @Test
-    public void onKioskAppCrashed_withUnprovisionedState_shouldMakeExpectedCalls()
+    public void onAppCrashed_withUnprovisionedState_shouldMakeExpectedCalls()
             throws Exception {
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.UNPROVISIONED));
 
-        mDevicePolicyController.onKioskAppCrashed().get();
+        mDevicePolicyController.onAppCrashed(true /* isKiosk */).get();
 
         shadowOf(Looper.getMainLooper()).idle();
         assertLockTaskModeNotStarted();
     }
 
     @Test
-    public void onKioskAppCrashed_withProvisionInProgressState_shouldCallExpectedMethods()
+    public void onAppCrashed_withProvisionInProgressState_shouldCallExpectedMethods()
             throws Exception {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
+        setExpectationsOnEnableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_IN_PROGRESS));
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
 
-        mDevicePolicyController.onKioskAppCrashed().get();
+        mDevicePolicyController.onAppCrashed(true /* isKiosk */).get();
 
         shadowOf(Looper.getMainLooper()).idle();
         assertLockTaskModeStarted();
     }
 
     @Test
-    public void onKioskAppCrashed_withKioskProvisionedState_shouldMakeExpectedCalls()
+    public void onAppCrashed_withKioskProvisionedState_shouldMakeExpectedCalls()
             throws Exception {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnEnableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnAddFinancedDeviceKioskRole();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.KIOSK_PROVISIONED));
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
 
-        mDevicePolicyController.onKioskAppCrashed().get();
+        mDevicePolicyController.onAppCrashed(true /* isKiosk */).get();
 
         shadowOf(Looper.getMainLooper()).idle();
         assertLockTaskModeStarted();
     }
 
     @Test
-    public void onKioskAppCrashed_withProvisionPausedState_shouldMakeExpectedCalls()
+    public void onAppCrashed_withProvisionPausedState_shouldMakeExpectedCalls()
             throws Exception {
         setupSetupParameters();
+        setExpectationsOnDisableControllerKeepAlive();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
                 ProvisionState.PROVISION_PAUSED));
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
 
-        mDevicePolicyController.onKioskAppCrashed().get();
+        mDevicePolicyController.onAppCrashed(true /* isKiosk */).get();
 
         shadowOf(Looper.getMainLooper()).idle();
         assertLockTaskModeNotStarted();
     }
 
     @Test
-    public void onKioskAppCrashed_withProvisionFailedState_shouldMakeExpectedCalls()
+    public void onAppCrashed_withProvisionFailedState_shouldMakeExpectedCalls()
             throws Exception {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
@@ -909,14 +995,14 @@ public final class DevicePolicyControllerImplTest {
                 ProvisionState.PROVISION_FAILED));
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
 
-        mDevicePolicyController.onKioskAppCrashed().get();
+        mDevicePolicyController.onAppCrashed(true /* isKiosk */).get();
 
         shadowOf(Looper.getMainLooper()).idle();
         assertLockTaskModeNotStarted();
     }
 
     @Test
-    public void onKioskAppCrashed_withUndefinedDeviceState_shouldMakeExpectedCalls()
+    public void onAppCrashed_withUndefinedDeviceState_shouldMakeExpectedCalls()
             throws Exception {
         setupSetupParameters();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
@@ -924,14 +1010,14 @@ public final class DevicePolicyControllerImplTest {
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
         GlobalParametersClient.getInstance().setDeviceState(UNDEFINED).get();
 
-        mDevicePolicyController.onKioskAppCrashed().get();
+        mDevicePolicyController.onAppCrashed(true /* isKiosk */).get();
 
         shadowOf(Looper.getMainLooper()).idle();
         assertLockTaskModeNotStarted();
     }
 
     @Test
-    public void onKioskAppCrashed_withLockedDeviceState_shouldMakeExpectedCalls() throws Exception {
+    public void onAppCrashed_withLockedDeviceState_shouldMakeExpectedCalls() throws Exception {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
@@ -939,14 +1025,14 @@ public final class DevicePolicyControllerImplTest {
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
         GlobalParametersClient.getInstance().setDeviceState(LOCKED).get();
 
-        mDevicePolicyController.onKioskAppCrashed().get();
+        mDevicePolicyController.onAppCrashed(true /* isKiosk */).get();
 
         shadowOf(Looper.getMainLooper()).idle();
         assertLockTaskModeStarted();
     }
 
     @Test
-    public void onKioskAppCrashed_withUnlockedDeviceState_shouldMakeExpectedCalls()
+    public void onAppCrashed_withUnlockedDeviceState_shouldMakeExpectedCalls()
             throws Exception {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
@@ -955,18 +1041,19 @@ public final class DevicePolicyControllerImplTest {
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
         GlobalParametersClient.getInstance().setDeviceState(UNLOCKED).get();
 
-        mDevicePolicyController.onKioskAppCrashed().get();
+        mDevicePolicyController.onAppCrashed(true /* isKiosk */).get();
 
         shadowOf(Looper.getMainLooper()).idle();
         assertLockTaskModeNotStarted();
     }
 
     @Test
-    public void onKioskAppCrashed_withClearedDeviceState_shouldMakeExpectedCalls()
+    public void onAppCrashed_withClearedDeviceState_shouldMakeExpectedCalls()
             throws Exception {
         setupSetupParameters();
         setupAppOpsPolicyHandlerExpectations();
         setExpectationsOnDisableKioskKeepAlive();
+        setExpectationsOnDisableControllerKeepAlive();
         setExpectationsOnRemoveFinancedDeviceKioskRole();
         setupFinalizationControllerExpectations();
         when(mMockProvisionStateController.getState()).thenReturn(Futures.immediateFuture(
@@ -974,7 +1061,7 @@ public final class DevicePolicyControllerImplTest {
         when(mMockUserManager.isUserUnlocked()).thenReturn(true);
         GlobalParametersClient.getInstance().setDeviceState(CLEARED).get();
 
-        mDevicePolicyController.onKioskAppCrashed().get();
+        mDevicePolicyController.onAppCrashed(true /* isKiosk */).get();
 
         shadowOf(Looper.getMainLooper()).idle();
         assertLockTaskModeNotStarted();
@@ -1091,6 +1178,24 @@ public final class DevicePolicyControllerImplTest {
         }).when(mMockSystemDeviceLockManager).disableKioskKeepalive(any(Executor.class), any());
     }
 
+    private void setExpectationsOnEnableControllerKeepAlive() {
+        doAnswer((Answer<Object>) invocation -> {
+            OutcomeReceiver<Void, Exception> callback = invocation.getArgument(/* callback =*/ 1);
+            callback.onResult(/* result =*/ null);
+            return null;
+        }).when(mMockSystemDeviceLockManager).enableControllerKeepalive(any(Executor.class),
+                any());
+    }
+
+    private void setExpectationsOnDisableControllerKeepAlive() {
+        doAnswer((Answer<Object>) invocation -> {
+            OutcomeReceiver<Void, Exception> callback = invocation.getArgument(/* callback =*/ 1);
+            callback.onResult(/* result =*/ null);
+            return null;
+        }).when(mMockSystemDeviceLockManager).disableControllerKeepalive(any(Executor.class),
+                any());
+    }
+
     private void setupAppOpsPolicyHandlerExpectations() {
         doAnswer((Answer<Boolean>) invocation -> {
             OutcomeReceiver<Void, Exception> callback = invocation.getArgument(2 /* callback */);
@@ -1098,7 +1203,7 @@ public final class DevicePolicyControllerImplTest {
 
             return null;
         }).when(mMockSystemDeviceLockManager)
-                .setExemptFromActivityBackgroundStartRestriction(anyBoolean(),
+                .setDlcExemptFromActivityBgStartRestrictionState(anyBoolean(),
                         any(Executor.class),
                         any());
 
@@ -1108,9 +1213,8 @@ public final class DevicePolicyControllerImplTest {
 
             return null;
         }).when(mMockSystemDeviceLockManager)
-                .setExemptFromHibernation(anyString(), anyBoolean(),
-                        any(Executor.class),
-                        any());
+                .setKioskAppExemptFromRestrictionsState(anyString(), anyBoolean(),
+                        any(Executor.class), any());
     }
 
     private void setupFinalizationControllerExpectations() {
