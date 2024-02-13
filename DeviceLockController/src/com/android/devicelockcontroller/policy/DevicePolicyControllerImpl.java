@@ -38,6 +38,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.database.sqlite.SQLiteException;
 import android.os.Build;
 import android.os.UserManager;
 
@@ -46,19 +47,25 @@ import androidx.annotation.VisibleForTesting;
 import androidx.work.BackoffPolicy;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.Operation;
 import androidx.work.OutOfQuotaPolicy;
 import androidx.work.WorkManager;
 
 import com.android.devicelockcontroller.SystemDeviceLockManager;
 import com.android.devicelockcontroller.activities.LandingActivity;
 import com.android.devicelockcontroller.activities.ProvisioningActivity;
+import com.android.devicelockcontroller.common.DeviceLockConstants;
 import com.android.devicelockcontroller.common.DeviceLockConstants.ProvisioningType;
 import com.android.devicelockcontroller.policy.DeviceStateController.DeviceState;
 import com.android.devicelockcontroller.policy.ProvisionStateController.ProvisionState;
+import com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionStateWorker;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerScheduler;
+import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerProvider;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
 import com.android.devicelockcontroller.util.LogUtil;
 
+import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -179,9 +186,22 @@ public final class DevicePolicyControllerImpl implements DevicePolicyController 
                         /* failure= */ true),
                 mode -> {
                     startLockTaskModeIfNeeded(mode);
+                    handlePolicyEnforcementFailure();
                     return null;
                 },
                 mBgExecutor);
+    }
+
+    private void handlePolicyEnforcementFailure() {
+        final DeviceLockControllerSchedulerProvider schedulerProvider =
+                (DeviceLockControllerSchedulerProvider) mContext.getApplicationContext();
+        final DeviceLockControllerScheduler scheduler =
+                schedulerProvider.getDeviceLockControllerScheduler();
+        // Hard failure due to policy enforcement, treat it as mandatory reset device alarm.
+        scheduler.scheduleMandatoryResetDeviceAlarm();
+
+        ReportDeviceProvisionStateWorker.reportSetupFailed(WorkManager.getInstance(mContext),
+                DeviceLockConstants.ProvisionFailureReason.POLICY_ENFORCEMENT_FAILED);
     }
 
     /**
@@ -477,7 +497,24 @@ public final class DevicePolicyControllerImpl implements DevicePolicyController 
                 .setBackoffCriteria(BackoffPolicy.LINEAR,
                         START_LOCK_TASK_MODE_WORKER_RETRY_INTERVAL_SECONDS)
                 .build();
-        workManager.enqueueUniqueWork(START_LOCK_TASK_MODE_WORK_NAME, ExistingWorkPolicy.REPLACE,
-                startLockTask);
+        final ListenableFuture<Operation.State.SUCCESS> enqueueResult =
+                workManager.enqueueUniqueWork(START_LOCK_TASK_MODE_WORK_NAME,
+                        ExistingWorkPolicy.REPLACE, startLockTask).getResult();
+        Futures.addCallback(enqueueResult, new FutureCallback<>() {
+            @Override
+            public void onSuccess(Operation.State.SUCCESS result) {
+                // Enqueued
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                LogUtil.e(TAG, "Failed to enqueue 'start lock task mode' work", t);
+                if (t instanceof SQLiteException) {
+                    wipeDevice();
+                } else {
+                    LogUtil.e(TAG, "Not wiping device (non SQL exception)");
+                }
+            }
+        }, mBgExecutor);
     }
 }
