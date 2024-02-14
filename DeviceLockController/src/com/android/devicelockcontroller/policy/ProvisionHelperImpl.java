@@ -16,7 +16,6 @@
 
 package com.android.devicelockcontroller.policy;
 
-import static androidx.work.WorkInfo.State.FAILED;
 import static androidx.work.WorkInfo.State.SUCCEEDED;
 
 import static com.android.devicelockcontroller.common.DeviceLockConstants.EXTRA_KIOSK_PACKAGE;
@@ -31,6 +30,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.database.sqlite.SQLiteException;
 import android.os.Build;
 
 import androidx.annotation.NonNull;
@@ -43,6 +43,7 @@ import androidx.work.ExistingWorkPolicy;
 import androidx.work.ListenableWorker;
 import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.Operation;
 import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
@@ -65,10 +66,14 @@ import com.android.devicelockcontroller.util.LogUtil;
 
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * An implementation of {@link ProvisionHelper}.
@@ -78,6 +83,11 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
     private static final String FILENAME = "device-lock-controller-provisioning-preferences";
     private static final String USE_PREINSTALLED_KIOSK_PREF =
             "debug.devicelock.usepreinstalledkiosk";
+    private static final String WORK_TAG_APPROVED_COUNTRY = "TAG_APPROVED_COUNTRY";
+    private static final String WORK_TAG_PLAY_INSTALL = "TAG_PLAY_INSTALL";
+    @VisibleForTesting
+    static final long POLL_DELAY_MS = 1000;
+    private static final int POLL_RETRIES = 300;
     private static volatile SharedPreferences sSharedPreferences;
 
     @VisibleForTesting
@@ -92,21 +102,24 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
     private final Context mContext;
     private final ProvisionStateController mStateController;
     private final Executor mExecutor;
+    private final ScheduledExecutorService mScheduledExecutorService;
     private final DeviceLockControllerScheduler mScheduler;
 
     public ProvisionHelperImpl(Context context, ProvisionStateController stateController) {
-        this(context, stateController, Executors.newCachedThreadPool());
+        this(context, stateController, Executors.newCachedThreadPool(),
+                Executors.newSingleThreadScheduledExecutor());
     }
 
     @VisibleForTesting
     ProvisionHelperImpl(Context context, ProvisionStateController stateController,
-            Executor executor) {
+            Executor executor, ScheduledExecutorService executorService) {
         mContext = context;
         mStateController = stateController;
         DeviceLockControllerSchedulerProvider schedulerProvider =
                 (DeviceLockControllerSchedulerProvider) mContext.getApplicationContext();
         mScheduler = schedulerProvider.getDeviceLockControllerScheduler();
         mExecutor = executor;
+        mScheduledExecutorService = executorService;
     }
 
     @Override
@@ -138,9 +151,10 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
         progressController.setProvisioningProgress(ProvisioningProgress.GETTING_DEVICE_READY);
         WorkManager workManager = WorkManager.getInstance(mContext);
         OneTimeWorkRequest isDeviceInApprovedCountryWork = getIsDeviceInApprovedCountryWork();
-        workManager.enqueueUniqueWork(IsDeviceInApprovedCountryWorker.class.getSimpleName(),
-                ExistingWorkPolicy.REPLACE, isDeviceInApprovedCountryWork);
 
+        final ListenableFuture<Operation.State.SUCCESS> enqueueResult =
+                workManager.enqueueUniqueWork(IsDeviceInApprovedCountryWorker.class.getSimpleName(),
+                ExistingWorkPolicy.REPLACE, isDeviceInApprovedCountryWork).getResult();
         FutureCallback<String> isInApprovedCountryCallback = new FutureCallback<>() {
             @Override
             public void onSuccess(String kioskPackage) {
@@ -171,13 +185,12 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
                         progressController);
             }
         };
-
-        workManager.getWorkInfoByIdLiveData(isDeviceInApprovedCountryWork.getId())
-                .observe(owner, workInfo -> {
-                    if (workInfo == null) return;
-                    WorkInfo.State state = workInfo.getState();
-                    LogUtil.d(TAG, "WorkInfo changed: " + workInfo);
-                    if (state == SUCCEEDED) {
+        Futures.addCallback(enqueueResult, new FutureCallback<Operation.State.SUCCESS>() {
+            @Override
+            public void onSuccess(Operation.State.SUCCESS result) {
+                pollWorkResult(WORK_TAG_APPROVED_COUNTRY, new WorkFinishedCallback() {
+                    @Override
+                    public void onSuccess(WorkInfo workInfo) {
                         if (workInfo.getOutputData().getBoolean(KEY_IS_IN_APPROVED_COUNTRY,
                                 false)) {
                             Futures.addCallback(
@@ -188,12 +201,28 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
                             handleFailure(ProvisionFailureReason.NOT_IN_ELIGIBLE_COUNTRY,
                                     isMandatory, progressController);
                         }
-                    } else if (state == FAILED) {
+                    }
+
+                    @Override
+                    public void onFailure(WorkInfo workInfo) {
                         LogUtil.w(TAG, "Failed to get country eligibility!");
-                        handleFailure(ProvisionFailureReason.COUNTRY_INFO_UNAVAILABLE, isMandatory,
+                        handleFailure(ProvisionFailureReason.COUNTRY_INFO_UNAVAILABLE,
+                                isMandatory,
                                 progressController);
                     }
-                });
+                }, POLL_RETRIES);
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                LogUtil.e(TAG, "Failed to enqueue 'device in approved country' work", t);
+                if (t instanceof SQLiteException) {
+                    mStateController.getDevicePolicyController().wipeDevice();
+                } else {
+                    LogUtil.e(TAG, "Not wiping device (non SQL exception)");
+                }
+            }
+        }, mExecutor);
     }
 
     private void installFromPlay(LifecycleOwner owner, String kioskPackage, boolean isMandatory,
@@ -211,30 +240,46 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
         OneTimeWorkRequest playInstallPackageTask =
                 getPlayInstallPackageTask(playInstallTaskClass, kioskPackage);
         WorkManager workManager = WorkManager.getInstance(mContext);
-        workManager.enqueueUniqueWork(playInstallTaskClass.getSimpleName(),
-                ExistingWorkPolicy.REPLACE, playInstallPackageTask);
-        mContext.getMainExecutor().execute(
-                () -> workManager.getWorkInfoByIdLiveData(playInstallPackageTask.getId())
-                        .observe(owner, workInfo -> {
-                            if (workInfo == null) return;
-                            WorkInfo.State state = workInfo.getState();
-                            LogUtil.d(TAG, "WorkInfo changed: " + workInfo);
-                            if (state == SUCCEEDED) {
-                                progressController.setProvisioningProgress(
-                                        ProvisioningProgress.OPENING_KIOSK_APP);
-                                ReportDeviceProvisionStateWorker.reportSetupCompleted(workManager);
-                                mStateController.postSetNextStateForEventRequest(PROVISION_KIOSK);
-                            } else if (state == FAILED) {
-                                LogUtil.w(TAG, "Play installation failed!");
-                                handleFailure(ProvisionFailureReason.PLAY_INSTALLATION_FAILED,
-                                        isMandatory, progressController);
-                            }
-                        }));
+        final ListenableFuture<Operation.State.SUCCESS> enqueueResult =
+                workManager.enqueueUniqueWork(playInstallTaskClass.getSimpleName(),
+                        ExistingWorkPolicy.REPLACE, playInstallPackageTask).getResult();
+        Futures.addCallback(enqueueResult, new FutureCallback<Operation.State.SUCCESS>() {
+            @Override
+            public void onSuccess(Operation.State.SUCCESS result) {
+                pollWorkResult(WORK_TAG_PLAY_INSTALL, new WorkFinishedCallback() {
+                    @Override
+                    public void onSuccess(WorkInfo workInfo) {
+                        progressController.setProvisioningProgress(
+                                ProvisioningProgress.OPENING_KIOSK_APP);
+                        ReportDeviceProvisionStateWorker.reportSetupCompleted(workManager);
+                        mStateController.postSetNextStateForEventRequest(PROVISION_KIOSK);
+                    }
+
+                    @Override
+                    public void onFailure(WorkInfo workInfo) {
+                        LogUtil.w(TAG, "Play installation failed!");
+                        handleFailure(ProvisionFailureReason.PLAY_INSTALLATION_FAILED,
+                                isMandatory, progressController);
+                    }
+                }, POLL_RETRIES);
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                LogUtil.e(TAG, "Failed to enqueue 'play install' work", t);
+                if (t instanceof SQLiteException) {
+                    mStateController.getDevicePolicyController().wipeDevice();
+                } else {
+                    LogUtil.e(TAG, "Not wiping device (non SQL exception)");
+                }
+            }
+        }, mExecutor);
     }
 
     private void handleFailure(@ProvisionFailureReason int reason, boolean isMandatory,
             ProvisioningProgressController progressController) {
-        StatsLogger logger = ((StatsLoggerProvider) mContext).getStatsLogger();
+        StatsLogger logger =
+                ((StatsLoggerProvider) mContext.getApplicationContext()).getStatsLogger();
         switch (reason) {
             case ProvisionFailureReason.PLAY_TASK_UNAVAILABLE -> {
                 logger.logProvisionFailure(
@@ -282,6 +327,7 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
                 .setConstraints(new Constraints.Builder().setRequiredNetworkType(
                         NetworkType.CONNECTED).build())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, BACKOFF_DELAY)
+                .addTag(WORK_TAG_APPROVED_COUNTRY)
                 .build();
     }
 
@@ -293,6 +339,7 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
                         EXTRA_KIOSK_PACKAGE, kioskPackageName).build())
                 .setConstraints(new Constraints.Builder().setRequiredNetworkType(
                         NetworkType.CONNECTED).build())
+                .addTag(WORK_TAG_PLAY_INSTALL)
                 .build();
     }
 
@@ -306,6 +353,55 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
         LocalDateTime resumeDateTime = LocalDateTime.now().plusHours(1);
         DeviceLockNotificationManager.sendDeferredProvisioningNotification(context, resumeDateTime,
                 pendingIntent);
+    }
+
+    /**
+     * Poll the work result to see when it's done.
+     *
+     * TODO(324318445): Do not use this workaround and instead observe the work result
+     * @param workTag tag of the work
+     * @param workFinishedCallback callback when work is complete
+     * @param triesLeft number of tries to poll the work
+     */
+    private void pollWorkResult(String workTag, WorkFinishedCallback workFinishedCallback,
+            int triesLeft) {
+        WorkManager workManager = WorkManager.getInstance(mContext);
+        Futures.addCallback(workManager.getWorkInfosByTag(workTag),
+                new FutureCallback<List<WorkInfo>>() {
+                    @Override
+                    public void onSuccess(List<WorkInfo> workInfos) {
+                        if (workInfos == null || workInfos.isEmpty()) {
+                            LogUtil.w(TAG, "No work info associated with the tag: " + workTag);
+                            return;
+                        }
+                        WorkInfo workInfo = workInfos.get(0);
+                        WorkInfo.State state = workInfo.getState();
+                        if (!state.isFinished()) {
+                            if (triesLeft == 0) {
+                                LogUtil.e(TAG, "Ran out of poll retries: " + workInfo);
+                                workFinishedCallback.onFailure(workInfo);
+                                return;
+                            }
+                            mScheduledExecutorService.schedule(() ->
+                                    pollWorkResult(workTag, workFinishedCallback, triesLeft - 1),
+                                    POLL_DELAY_MS,
+                                    TimeUnit.MILLISECONDS);
+                        } else {
+                            LogUtil.d(TAG, "WorkInfo finished: " + workInfo);
+                            if (state == SUCCEEDED) {
+                                workFinishedCallback.onSuccess(workInfo);
+                            } else {
+                                workFinishedCallback.onFailure(workInfo);
+                            }
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        throw new RuntimeException(t);
+                    }
+                },
+                mContext.getMainExecutor());
     }
 
     /**
@@ -324,5 +420,20 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
     private static boolean getPreinstalledKioskAllowed(Context context) {
         return Build.isDebuggable() && getSharedPreferences(context).getBoolean(
                 USE_PREINSTALLED_KIOSK_PREF, Build.isDebuggable());
+    }
+
+    /**
+     * Callback for when work is finished or fails.
+     */
+    private interface WorkFinishedCallback {
+        /**
+         * Called when work finishes in succeeded state
+         */
+        void onSuccess(WorkInfo workInfo);
+
+        /**
+         * Called when work finishes in failed state or work never runs
+         */
+        void onFailure(WorkInfo workInfo);
     }
 }
