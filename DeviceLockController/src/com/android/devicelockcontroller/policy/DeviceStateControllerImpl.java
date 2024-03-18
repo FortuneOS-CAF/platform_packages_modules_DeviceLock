@@ -86,7 +86,7 @@ public final class DeviceStateControllerImpl implements DeviceStateController {
                     } else if (provisionState == PROVISION_SUCCEEDED) {
                         maybeSetProvisioningSuccess = Futures.immediateVoidFuture();
                     } else if (provisionState == UNPROVISIONED && (deviceState == LOCKED
-                        || deviceState == UNLOCKED)) {
+                            || deviceState == UNLOCKED)) {
                         // During normal operation, we should not get lock/unlock requests in
                         // the UNPROVISIONED state. Used for CTS compliance.
                         mPseudoDeviceState = deviceState;
@@ -132,7 +132,13 @@ public final class DeviceStateControllerImpl implements DeviceStateController {
                 }, mExecutor);
     }
 
-    private ListenableFuture<Boolean> isCleared() {
+    @Override
+    public ListenableFuture<Integer> getDeviceState() {
+        return mGlobalParametersClient.getDeviceState();
+    }
+
+    @Override
+    public ListenableFuture<Boolean> isCleared() {
         return Futures.transform(mGlobalParametersClient.getDeviceState(),
                 s -> s == CLEARED, MoreExecutors.directExecutor());
     }

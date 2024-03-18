@@ -102,14 +102,17 @@ public final class DeviceCheckInWorker extends AbstractCheckInWorker {
                         if (response.hasRecoverableError()) {
                             LogUtil.w(TAG, "Check-in failed w/ recoverable error" + response
                                     + "\nRetrying...");
+                            mStatsLogger.logCheckInRetry(
+                                    StatsLogger.CheckInRetryReason.RPC_FAILURE);
                             return Result.retry();
                         }
                         if (response.isSuccessful()) {
-                            mStatsLogger.logSuccessfulCheckIn();
-                            return mCheckInHelper.handleGetDeviceCheckInStatusResponse(response,
-                                    scheduler)
-                                    ? Result.success()
-                                    : Result.retry();
+                            boolean isResponseHandlingSuccessful = mCheckInHelper
+                                    .handleGetDeviceCheckInStatusResponse(response, scheduler);
+                            if (isResponseHandlingSuccessful) {
+                                mStatsLogger.logSuccessfulCheckIn();
+                            }
+                            return isResponseHandlingSuccessful ? Result.success() : Result.retry();
                         }
 
                         if (response.isInterrupted()) {
@@ -120,6 +123,8 @@ public final class DeviceCheckInWorker extends AbstractCheckInWorker {
                         LogUtil.e(TAG, "CheckIn failed: " + response + "\nRetry check-in in: "
                                 + RETRY_ON_FAILURE_DELAY);
                         scheduler.scheduleRetryCheckInWork(RETRY_ON_FAILURE_DELAY);
+                        mStatsLogger.logCheckInRetry(
+                                StatsLogger.CheckInRetryReason.RPC_FAILURE);
                         return Result.failure();
                     }, mExecutorService);
                 }, mExecutorService);

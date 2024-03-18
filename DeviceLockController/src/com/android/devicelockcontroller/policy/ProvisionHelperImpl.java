@@ -31,6 +31,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.database.sqlite.SQLiteException;
 import android.os.Build;
 
 import androidx.annotation.NonNull;
@@ -43,6 +44,7 @@ import androidx.work.ExistingWorkPolicy;
 import androidx.work.ListenableWorker;
 import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.Operation;
 import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 
@@ -57,12 +59,15 @@ import com.android.devicelockcontroller.provision.worker.ReportDeviceProvisionSt
 import com.android.devicelockcontroller.receivers.ResumeProvisionReceiver;
 import com.android.devicelockcontroller.schedule.DeviceLockControllerScheduler;
 import com.android.devicelockcontroller.schedule.DeviceLockControllerSchedulerProvider;
+import com.android.devicelockcontroller.stats.StatsLogger;
+import com.android.devicelockcontroller.stats.StatsLoggerProvider;
 import com.android.devicelockcontroller.storage.GlobalParametersClient;
 import com.android.devicelockcontroller.storage.SetupParametersClient;
 import com.android.devicelockcontroller.util.LogUtil;
 
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 
 import java.time.LocalDateTime;
 import java.util.concurrent.Executor;
@@ -78,7 +83,8 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
             "debug.devicelock.usepreinstalledkiosk";
     private static volatile SharedPreferences sSharedPreferences;
 
-    private static synchronized SharedPreferences getSharedPreferences(Context context) {
+    @VisibleForTesting
+    static synchronized SharedPreferences getSharedPreferences(Context context) {
         if (sSharedPreferences == null) {
             sSharedPreferences = context.createDeviceProtectedStorageContext().getSharedPreferences(
                     FILENAME, Context.MODE_PRIVATE);
@@ -131,12 +137,31 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
     @Override
     public void scheduleKioskAppInstallation(LifecycleOwner owner,
             ProvisioningProgressController progressController, boolean isMandatory) {
-        LogUtil.v(TAG, "Trigger setup flow");
+        LogUtil.v(TAG, "Schedule installation work");
         progressController.setProvisioningProgress(ProvisioningProgress.GETTING_DEVICE_READY);
         WorkManager workManager = WorkManager.getInstance(mContext);
         OneTimeWorkRequest isDeviceInApprovedCountryWork = getIsDeviceInApprovedCountryWork();
-        workManager.enqueueUniqueWork(IsDeviceInApprovedCountryWorker.class.getSimpleName(),
-                ExistingWorkPolicy.REPLACE, isDeviceInApprovedCountryWork);
+
+        final ListenableFuture<Operation.State.SUCCESS> enqueueResult =
+                workManager.enqueueUniqueWork(IsDeviceInApprovedCountryWorker.class.getSimpleName(),
+                ExistingWorkPolicy.REPLACE, isDeviceInApprovedCountryWork).getResult();
+        Futures.addCallback(enqueueResult, new FutureCallback<Operation.State.SUCCESS>() {
+                    @Override
+                    public void onSuccess(Operation.State.SUCCESS result) {
+                        // Enqueued
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        LogUtil.e(TAG, "Failed to enqueue 'device in approved country' work",
+                                t);
+                        if (t instanceof SQLiteException) {
+                            mStateController.getDevicePolicyController().wipeDevice();
+                        } else {
+                            LogUtil.e(TAG, "Not wiping device (non SQL exception)");
+                        }
+                    }
+                }, mExecutor);
 
         FutureCallback<String> isInApprovedCountryCallback = new FutureCallback<>() {
             @Override
@@ -150,6 +175,7 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
                         LogUtil.i(TAG, "Kiosk app is pre-installed");
                         progressController.setProvisioningProgress(
                                 ProvisioningProgress.OPENING_KIOSK_APP);
+                        ReportDeviceProvisionStateWorker.reportSetupCompleted(workManager);
                         mStateController.postSetNextStateForEventRequest(PROVISION_KIOSK);
                     } catch (NameNotFoundException e) {
                         LogUtil.i(TAG, "Kiosk app is not pre-installed");
@@ -163,7 +189,7 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
             @Override
             public void onFailure(Throwable t) {
                 LogUtil.w(TAG, "Failed to install kiosk app!", t);
-                handleFailure(ProvisionFailureReason.UNKNOWN_REASON, isMandatory,
+                handleFailure(ProvisionFailureReason.PLAY_INSTALLATION_FAILED, isMandatory,
                         progressController);
             }
         };
@@ -207,8 +233,26 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
         OneTimeWorkRequest playInstallPackageTask =
                 getPlayInstallPackageTask(playInstallTaskClass, kioskPackage);
         WorkManager workManager = WorkManager.getInstance(mContext);
-        workManager.enqueueUniqueWork(playInstallTaskClass.getSimpleName(),
-                ExistingWorkPolicy.REPLACE, playInstallPackageTask);
+        final ListenableFuture<Operation.State.SUCCESS> enqueueResult =
+                workManager.enqueueUniqueWork(playInstallTaskClass.getSimpleName(),
+                        ExistingWorkPolicy.REPLACE, playInstallPackageTask).getResult();
+        Futures.addCallback(enqueueResult, new FutureCallback<Operation.State.SUCCESS>() {
+            @Override
+            public void onSuccess(Operation.State.SUCCESS result) {
+                // Enqueued
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                LogUtil.e(TAG, "Failed to enqueue 'play install' work", t);
+                if (t instanceof SQLiteException) {
+                    mStateController.getDevicePolicyController().wipeDevice();
+                } else {
+                    LogUtil.e(TAG, "Not wiping device (non SQL exception)");
+                }
+            }
+        }, mExecutor);
+
         mContext.getMainExecutor().execute(
                 () -> workManager.getWorkInfoByIdLiveData(playInstallPackageTask.getId())
                         .observe(owner, workInfo -> {
@@ -230,11 +274,38 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
 
     private void handleFailure(@ProvisionFailureReason int reason, boolean isMandatory,
             ProvisioningProgressController progressController) {
+        StatsLogger logger =
+                ((StatsLoggerProvider) mContext.getApplicationContext()).getStatsLogger();
+        switch (reason) {
+            case ProvisionFailureReason.PLAY_TASK_UNAVAILABLE -> {
+                logger.logProvisionFailure(
+                        StatsLogger.ProvisionFailureReasonStats.PLAY_TASK_UNAVAILABLE);
+            }
+            case ProvisionFailureReason.PLAY_INSTALLATION_FAILED -> {
+                logger.logProvisionFailure(
+                        StatsLogger.ProvisionFailureReasonStats.PLAY_INSTALLATION_FAILED);
+            }
+            case ProvisionFailureReason.COUNTRY_INFO_UNAVAILABLE -> {
+                logger.logProvisionFailure(
+                        StatsLogger.ProvisionFailureReasonStats.COUNTRY_INFO_UNAVAILABLE);
+            }
+            case ProvisionFailureReason.NOT_IN_ELIGIBLE_COUNTRY -> {
+                logger.logProvisionFailure(
+                        StatsLogger.ProvisionFailureReasonStats.NOT_IN_ELIGIBLE_COUNTRY);
+            }
+            case ProvisionFailureReason.POLICY_ENFORCEMENT_FAILED -> {
+                logger.logProvisionFailure(
+                        StatsLogger.ProvisionFailureReasonStats.POLICY_ENFORCEMENT_FAILED);
+            }
+            default -> {
+                logger.logProvisionFailure(StatsLogger.ProvisionFailureReasonStats.UNKNOWN);
+            }
+        }
         if (isMandatory) {
             ReportDeviceProvisionStateWorker.reportSetupFailed(
                     WorkManager.getInstance(mContext), reason);
             progressController.setProvisioningProgress(
-                    ProvisioningProgress.MANDATORY_FAILED_PROVISION);
+                    ProvisioningProgress.getMandatoryProvisioningFailedProgress(reason));
             mScheduler.scheduleMandatoryResetDeviceAlarm();
         } else {
             // For non-mandatory provisioning, failure should only be reported after
@@ -247,7 +318,7 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
     }
 
     @NonNull
-    static OneTimeWorkRequest getIsDeviceInApprovedCountryWork() {
+    private static OneTimeWorkRequest getIsDeviceInApprovedCountryWork() {
         return new OneTimeWorkRequest.Builder(IsDeviceInApprovedCountryWorker.class)
                 .setConstraints(new Constraints.Builder().setRequiredNetworkType(
                         NetworkType.CONNECTED).build())
@@ -256,7 +327,7 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
     }
 
     @NonNull
-    static OneTimeWorkRequest getPlayInstallPackageTask(
+    private static OneTimeWorkRequest getPlayInstallPackageTask(
             Class<? extends ListenableWorker> playInstallTaskClass, String kioskPackageName) {
         return new OneTimeWorkRequest.Builder(playInstallTaskClass)
                 .setInputData(new Data.Builder().putString(
@@ -291,8 +362,8 @@ public final class ProvisionHelperImpl implements ProvisionHelper {
      * Returns true if provisioning should skip play install if there is already a preinstalled
      * kiosk app. By default, this returns true for debuggable build.
      */
-    public static boolean getPreinstalledKioskAllowed(Context context) {
-        return getSharedPreferences(context).getBoolean(
+    private static boolean getPreinstalledKioskAllowed(Context context) {
+        return Build.isDebuggable() && getSharedPreferences(context).getBoolean(
                 USE_PREINSTALLED_KIOSK_PREF, Build.isDebuggable());
     }
 }
