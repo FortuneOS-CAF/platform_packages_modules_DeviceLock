@@ -16,18 +16,14 @@
 
 package com.android.server.devicelock;
 
-import static android.provider.Settings.Secure.USER_SETUP_COMPLETE;
-
 import android.annotation.NonNull;
-import android.annotation.Nullable;
-import android.content.ContentResolver;
+import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.database.ContentObserver;
-import android.net.Uri;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Process;
 import android.os.UserHandle;
 import android.os.UserManager;
-import android.provider.Settings;
 import android.util.Slog;
 
 import com.android.server.SystemService;
@@ -48,6 +44,10 @@ public final class DeviceLockService extends SystemService {
         super(context);
         Slog.d(TAG, "DeviceLockService constructor");
         mImpl = new DeviceLockServiceImpl(context);
+
+        final IntentFilter userFilter = new IntentFilter();
+        userFilter.addAction(Intent.ACTION_USER_ADDED);
+        context.registerReceiver(mUserReceiver, userFilter);
     }
 
     @Override
@@ -72,9 +72,12 @@ public final class DeviceLockService extends SystemService {
 
     @Override
     public boolean isUserSupported(@NonNull TargetUser user) {
+        return isUserSupported(user.getUserHandle());
+    }
+
+    private boolean isUserSupported(UserHandle userHandle) {
         final UserManager userManager =
-                getUserContext(getContext(),
-                        user.getUserHandle()).getSystemService(UserManager.class);
+                getUserContext(getContext(), userHandle).getSystemService(UserManager.class);
         return !userManager.isProfile();
     }
 
@@ -83,7 +86,6 @@ public final class DeviceLockService extends SystemService {
         Objects.requireNonNull(to);
         Slog.d(TAG, "onUserSwitching from: " + from + " to: " + to);
         final UserHandle userHandle = to.getUserHandle();
-        mImpl.enforceDeviceLockControllerPackageEnabledState(userHandle);
         mImpl.onUserSwitching(userHandle);
     }
 
@@ -96,9 +98,8 @@ public final class DeviceLockService extends SystemService {
     public void onUserUnlocked(@NonNull TargetUser user) {
         Slog.d(TAG, "onUserUnlocked: " + user);
         final UserHandle userHandle = user.getUserHandle();
-        mImpl.onUserUnlocked(userHandle);
-        // TODO(b/312521897): Add unit tests for this flow
-        registerUserSetupCompleteListener(userHandle);
+        final Context userContext = getUserContext(getContext(), userHandle);
+        mImpl.onUserUnlocked(userContext, userHandle);
     }
 
     @Override
@@ -106,20 +107,18 @@ public final class DeviceLockService extends SystemService {
         Slog.d(TAG, "onUserStopping: " + user);
     }
 
-    private void registerUserSetupCompleteListener(UserHandle userHandle) {
-        final ContentResolver contentResolver = getUserContext(getContext(), userHandle)
-                .getContentResolver();
-        Uri setupCompleteUri = Settings.Secure.getUriFor(USER_SETUP_COMPLETE);
-        contentResolver.registerContentObserver(setupCompleteUri,
-                false /* notifyForDescendants */, new ContentObserver(null /* handler */) {
-                    @Override
-                    public void onChange(boolean selfChange, @Nullable Uri uri) {
-                        if (setupCompleteUri.equals(uri)
-                                && Settings.Secure.getInt(
-                                        contentResolver, USER_SETUP_COMPLETE, 0) != 0) {
-                            mImpl.onUserSetupCompleted(userHandle);
-                        }
-                    }
-                });
-    }
+    private BroadcastReceiver mUserReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_USER_ADDED.equals(intent.getAction())) {
+                final int userId = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, -1);
+                UserHandle userHandle = UserHandle.of(userId);
+                if (!isUserSupported(userHandle)) {
+                    return;
+                }
+                Slog.d(TAG, "onUserAdded: " + userHandle);
+                mImpl.onUserAdded(userHandle);
+            }
+        }
+    };
 }
